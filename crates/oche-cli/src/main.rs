@@ -1,4 +1,5 @@
 mod client;
+mod setup;
 mod tui;
 
 use anyhow::{Context, Result, bail};
@@ -30,7 +31,7 @@ struct Args {
     host: String,
     #[arg(short = 'p', long, global = true, value_parser = clap::value_parser!(u16).range(1..))]
     port: Option<u16>,
-    /// Listen address for run only; defaults to the saved config (loopback initially).
+    /// Listen address for run or initialization (loopback by default).
     #[arg(long, global = true)]
     bind: Option<IpAddr>,
     /// Emit machine-readable JSON on stdout.
@@ -42,6 +43,8 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Action {
+    /// Create configuration interactively; Enter accepts each default.
+    Init(setup::Options),
     /// Own the board and run the foreground control service.
     Run {
         /// Enable explicitly synthetic throws and takeout; no cameras are opened.
@@ -87,8 +90,16 @@ enum Action {
 
 #[derive(Subcommand)]
 enum ConfigAction {
-    /// Create local configuration and board ID; never overwrite an existing file.
-    Init,
+    /// Same as init; never overwrite an existing file.
+    Init(setup::Options),
+    /// Replace local settings and board ID; stop the daemon first.
+    Reset {
+        #[command(flatten)]
+        options: setup::Options,
+        /// Confirm replacement of all settings and creation of a new board ID.
+        #[arg(long)]
+        yes: bool,
+    },
     /// Validate the local TOML file without contacting a daemon.
     Validate,
     /// Export the connected daemon's configuration as TOML (or --json).
@@ -146,8 +157,51 @@ async fn execute(args: Args) -> Result<()> {
         Some(path) => path.clone(),
         None => config_path()?,
     };
+    let setup = match &args.command {
+        Some(Action::Init(options))
+        | Some(Action::Config {
+            action: ConfigAction::Init(options),
+        }) => Some((options, false, false)),
+        Some(Action::Config {
+            action: ConfigAction::Reset { options, yes },
+        }) => Some((options, true, *yes)),
+        _ => None,
+    };
+    if let Some((options, reset, yes)) = setup {
+        if args.host != "127.0.0.1" {
+            bail!(
+                "--host selects a remote daemon; use --bind for the local board's listen address"
+            );
+        }
+        let config =
+            setup::initialize(&path, options, reset, yes, args.bind, args.port, args.json)?;
+        if args.json {
+            print_json(&config)?;
+        } else {
+            println!(
+                "Saved {}\nBoard ID: {}\nStart the daemon with `oche-core --config {:?} run`, then open `oche-core --config {:?} remote`.",
+                path.display(),
+                config.board.id,
+                path,
+                path
+            );
+        }
+        return Ok(());
+    }
     if args.bind.is_some() && !matches!(args.command, Some(Action::Run { .. })) {
-        bail!("--bind is only valid with run; --host selects a daemon to manage");
+        bail!(
+            "--bind is only valid with run, init, or config reset; --host selects a daemon to manage"
+        );
+    }
+    if (matches!(args.command, Some(Action::Run { .. }))
+        || (args.command.is_none() && args.host == "127.0.0.1"))
+        && !path.try_exists()?
+    {
+        bail!(
+            "no configuration at {}; run `oche-core --config {:?} init` first (or add --defaults for unattended setup)",
+            path.display(),
+            path
+        );
     }
     if let Some(Action::Run { demo }) = args.command {
         if args.host != "127.0.0.1" {
@@ -156,7 +210,7 @@ async fn execute(args: Args) -> Result<()> {
             );
         }
         let store = Store::acquire(&path)?;
-        let config = store.load_or_create()?;
+        let config = storage::read(&path)?;
         let address = std::net::SocketAddr::new(
             args.bind.unwrap_or(config.server.bind),
             args.port.unwrap_or(config.server.port),
@@ -172,30 +226,17 @@ async fn execute(args: Args) -> Result<()> {
         oche_api::serve(listener, service, shutdown()).await?;
         return Ok(());
     }
-    match args.command {
-        Some(Action::Config {
-            action: ConfigAction::Init,
-        }) => {
-            let config = Store::acquire(&path)?.initialize()?;
-            if args.json {
-                print_json(&config)?;
-            } else {
-                println!("Created {}\nBoard ID: {}", path.display(), config.board.id);
-            }
-            return Ok(());
+    if let Some(Action::Config {
+        action: ConfigAction::Validate,
+    }) = args.command
+    {
+        let config = storage::read(&path)?;
+        if args.json {
+            print_json(&serde_json::json!({"valid": true, "board_id": config.board.id}))?;
+        } else {
+            println!("Valid configuration: {}", path.display());
         }
-        Some(Action::Config {
-            action: ConfigAction::Validate,
-        }) => {
-            let config = storage::read(&path)?;
-            if args.json {
-                print_json(&serde_json::json!({"valid": true, "board_id": config.board.id}))?;
-            } else {
-                println!("Valid configuration: {}", path.display());
-            }
-            return Ok(());
-        }
-        _ => {}
+        return Ok(());
     }
     let port = match args.port {
         Some(port) => port,
@@ -309,8 +350,9 @@ async fn execute(args: Args) -> Result<()> {
         }
         Some(
             Action::Run { .. }
+            | Action::Init(_)
             | Action::Config {
-                action: ConfigAction::Init | ConfigAction::Validate,
+                action: ConfigAction::Init(_) | ConfigAction::Reset { .. } | ConfigAction::Validate,
             },
         ) => unreachable!(),
     }

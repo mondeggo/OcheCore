@@ -55,11 +55,70 @@ def main():
 
         with open(Path(directory) / "daemon.log", "w+") as log:
             try:
+                assert "init" in cli("run", ok=False)["error"]
+                assert "init" in cli(ok=False)["error"]
+                assert not Path(config).exists()
+                assert "interactive terminal" in cli("init", ok=False)["error"]
+                original = cli("init", "--defaults")
+                assert original["server"]["port"] == port
+                assert "already exists" in cli("init", "--defaults", ok=False)["error"]
+                assert "confirmation" in cli("config", "reset", "--defaults", ok=False)["error"]
+                reset = cli("config", "reset", "--yes", "--defaults")
+                assert reset["board"]["id"] != original["board"]["id"]
+                assert cli("config", "validate")["board_id"] == reset["board"]["id"]
+
+                # Exercise setup in a real terminal, including cancellation and EOF.
+                def setup_terminal(arguments, answers, expected_success, config_path=config):
+                    master, slave = pty.openpty()
+                    process = subprocess.Popen([binary, "--config", config_path, "--port", str(port)] + arguments, stdin=slave, stdout=slave, stderr=slave)
+                    output = bytearray()
+                    try:
+                        for prompt, answer in answers:
+                            def prompted():
+                                if select.select([master], [], [], 0.1)[0]:
+                                    output.extend(os.read(master, 65536))
+                                return prompt in output
+                            eventually(prompted)
+                            output.clear()
+                            os.write(master, answer)
+                        assert (process.wait(timeout=5) == 0) == expected_success
+                    finally:
+                        if process.poll() is None:
+                            process.kill()
+                            process.wait()
+                        os.close(master)
+                        os.close(slave)
+
+                before_reset = Path(config).read_bytes()
+                setup_terminal(["config", "reset"], [(b"Continue [no]", b"\n")], False)
+                assert Path(config).read_bytes() == before_reset
+                setup_terminal(["config", "reset"], [
+                    (b"Continue [no]", b"yes\n"),
+                    (b"Board name", b"Cancelled board\n"),
+                    (b"Listen address [", b"\x04"),
+                ], False)
+                assert Path(config).read_bytes() == before_reset
+                wizard_path = Path(directory) / "wizard.toml"
+                setup_terminal(["init"], [
+                    (b"Board name", b"Wizard board\n"),
+                    (b"Listen address [", b"\n"),
+                    (b"Port [", b"\n"),
+                    (b"Camera count", b"\n"),
+                ], True, config_path=str(wizard_path))
+                assert 'name = "Wizard board"' in wizard_path.read_text()
+                wizard_path.write_text("invalid TOML [")
+                repaired = subprocess.run([binary, "--config", str(wizard_path), "--json", "config", "reset", "--yes", "--defaults"], check=True, capture_output=True, text=True)
+                assert json.loads(repaired.stdout)["server"]["port"] == 5180
+
                 daemon = start(True)
                 initial = cli("status")
                 assert initial["state"] == "stopped"
                 duplicate = subprocess.run(base + ["run"], capture_output=True, text=True, timeout=5)
                 assert duplicate.returncode != 0 and "in use" in duplicate.stderr
+                saved = Path(config).read_bytes()
+                assert "in use" in cli("config", "reset", "--yes", "--defaults", ok=False)["error"]
+                assert Path(config).read_bytes() == saved
+                subprocess.run([binary, "--config", str(Path(directory) / "second.toml"), "config", "init", "--defaults"], check=True, capture_output=True)
                 conflict = subprocess.run([binary, "--config", str(Path(directory) / "second.toml"), "--port", str(port), "run"], capture_output=True, text=True, timeout=5)
                 assert conflict.returncode != 0 and "cannot listen" in conflict.stderr
                 assert "not_implemented" in cli("calibrate", "--all", ok=False)["error"]
@@ -151,7 +210,7 @@ def main():
                 assert restarted["session_id"] != initial["session_id"]
                 assert restarted["physical_darts"] is None
                 assert "disabled" in cli("demo", "throw", "T20", ok=False)["error"]
-                print("PASS: CLI, TUI keyboard/mouse editing and restoration, native events, identity persistence, demo isolation, port/ownership conflicts, and streaming shutdown")
+                print("PASS: init/reset and setup cancellation, CLI, TUI keyboard/mouse editing and restoration, native events, identity persistence, demo isolation, port/ownership conflicts, and streaming shutdown")
             except BaseException:
                 log.flush()
                 log.seek(0)

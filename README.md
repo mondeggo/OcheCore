@@ -51,6 +51,7 @@ rustfmt, and Clippy. Development builds need a Linux C linker (for example,
 
 ```sh
 cargo build --locked --release -p oche-cli
+./target/release/oche-core init
 ./target/release/oche-core run
 ```
 
@@ -58,8 +59,12 @@ In another terminal, run `./target/release/oche-core remote`. Running without a
 subcommand also opens the TUI. Closing the UI leaves the daemon running. If the
 daemon is missing, the UI explains how to start it and reconnects automatically.
 
-First run creates `$XDG_CONFIG_HOME/ochecore/board.toml`, or
-`~/.config/ochecore/board.toml`. Use `--config FILE` for a separate board. Board ID
+`init` asks for a board name, listen IP address, port, and camera count. Press Enter
+to accept each default: `My dartboard`, `127.0.0.1`, `5180`, and one camera slot.
+It creates `$XDG_CONFIG_HOME/ochecore/board.toml`, or
+`~/.config/ochecore/board.toml`. Without a config, `run` and the local default
+command ask you to run `init`; they do not silently create one. Use `--config FILE`
+for a separate board. Remote management does not require a local configuration. Board ID
 survives rename/restart; session ID changes on restart. A file lock prevents two
 daemons from owning one configuration.
 
@@ -74,7 +79,11 @@ oche-core wake
 oche-core events --json
 oche-core events --json --count 5
 oche-core doctor
-oche-core config init                 # optional; never overwrites existing config
+oche-core init                        # interactive setup; never overwrites config
+oche-core config init                 # alias for init
+oche-core init --defaults             # unattended setup with default values
+oche-core init --defaults --name "Basement" --bind 127.0.0.1 --port 5180
+oche-core config reset                # confirm replacement, then run setup again
 oche-core config validate             # local TOML validation
 oche-core config export               # connected daemon's configuration
 oche-core config set board.name "Basement board"
@@ -91,8 +100,22 @@ oche-core cameras inspect --camera 1
 ```
 
 `config set` validates and atomically saves through the daemon; board ID is read
-only. `init` and `validate` are local file operations. Camera count is 1–4;
+only. `init`, `config reset`, and `config validate` are local file operations. Camera count is 1–4;
 decreasing it removes the highest slots. Assigned device paths must be unique.
+
+To start fresh, stop the daemon with Ctrl+C (or stop its container), run
+`oche-core config reset`, then `oche-core run`. Reset replaces all configuration
+settings and generates a **new board ID**. It refuses while the configuration is
+in use. Cancelling setup leaves the previous file untouched; the validated result
+is saved atomically at the end. For an unattended reset, use
+`oche-core config reset --yes --defaults`. To change just the port while keeping
+your board identity, use `oche-core config set server.port 5180` with the daemon
+running, then restart it. The separate `oche-core reset` command only resets the
+logical dart visit.
+
+The setup listen address belongs to this board: loopback permits local clients,
+and `0.0.0.0` listens on all IPv4 interfaces. `--host` selects a daemon to manage;
+it is not a persisted listen setting.
 Supported hardware modes are not enumerated or verified until capture exists.
 
 Speed presets: `very_low`, `low`, `default`, `high`, `very_high`. They are saved for
@@ -183,6 +206,7 @@ Autodarts adapters.
 ```sh
 mkdir -p data
 export OCHECORE_UID=$(id -u) OCHECORE_GID=$(id -g)
+docker compose run --build --rm ochecore init --bind 0.0.0.0
 docker compose up --build -d
 docker compose exec ochecore oche-core remote
 docker compose exec ochecore oche-core status --json
@@ -190,6 +214,8 @@ docker compose down
 ```
 
 Compose mounts the host folder `./data` at `/data` and publishes port 5180 on loopback.
+Run the initialization command once for an empty data folder; append `--defaults`
+for unattended setup. Existing configurations do not need initialization again.
 Set `OCHECORE_DATA_DIR` to use another existing folder. The UID/GID variables above
 run the container as your host user so it can write to that folder; keep them set
 when running Compose, or save their numeric values in `.env`. Without overrides,
@@ -203,7 +229,9 @@ Published releases provide an AMD64/ARM64 image. Replace OWNER, REPOSITORY, and
 the version with the GitHub repository and release tag:
 
 ```sh
-OCHECORE_IMAGE=ghcr.io/OWNER/REPOSITORY:vX.Y.Z docker compose up -d --no-build
+export OCHECORE_IMAGE=ghcr.io/OWNER/REPOSITORY:vX.Y.Z
+docker compose run --rm ochecore init --bind 0.0.0.0
+docker compose up -d --no-build
 ```
 
 The final image contains a static executable and notices, runs as UID/GID 65532,

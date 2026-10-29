@@ -25,6 +25,11 @@ and compatibility claims; it does not gate the native control foundation.
 - **TOML/UUID/atomic files:** schema version 1, board ID generated once, validated
   atomic replacement with file/directory sync, and a separate lifetime lock file.
   Native UUIDs do not predetermine a future compatibility adapter's representation.
+- **Explicit initialization:** `init` (also `config init`) collects validated
+  settings before saving; `--defaults` enables unattended provisioning. `run`
+  requires an existing config. `config reset` uses the same exclusive lock and
+  atomic save, requires confirmation or `--yes`, and deliberately generates a
+  new board ID. Cancelling or invalid input cannot partially replace settings.
 - **Explicit demo mode:** every throw is synthetic. Normal mode reports unknown
   occupancy and unavailable capture/calibration/vision. Camera modes are requested
   configuration, not verified hardware capabilities.

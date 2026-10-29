@@ -74,8 +74,9 @@ impl Store {
 pub fn read(path: &Path) -> Result<Config> {
     let metadata = fs::metadata(path).with_context(|| {
         format!(
-            "read {}; run `oche-core config init` or `oche-core run` first",
-            path.display()
+            "read {}; run `oche-core --config {:?} init` first",
+            path.display(),
+            path
         )
     })?;
     if metadata.len() > 64 * 1024 {

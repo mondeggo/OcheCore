@@ -16,6 +16,11 @@ if [[ "$test_uid" == 0 ]]; then
   test_gid=65532
   chown "$test_uid:$test_gid" "$data_dir"
 fi
+docker run --rm --network none --read-only \
+  --user "$test_uid:$test_gid" \
+  --cap-drop ALL --security-opt no-new-privileges:true \
+  --mount "type=bind,source=$data_dir,target=/data" \
+  "$image" init --defaults >/dev/null
 docker run --detach --name "$container" --network none --read-only \
   --user "$test_uid:$test_gid" \
   --cap-drop ALL --security-opt no-new-privileges:true \
