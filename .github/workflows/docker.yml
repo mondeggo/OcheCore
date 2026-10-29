@@ -1,0 +1,27 @@
+name: Docker build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Docker image check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build and test the runtime image without Internet access
+        run: |
+          docker build --tag ochecore:ci .
+          bash scripts/smoke_container.sh ochecore:ci

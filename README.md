@@ -11,6 +11,12 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/mondeggo/ochecore/actions/workflows/ci.yml"><img alt="App build status" src="https://img.shields.io/github/actions/workflow/status/mondeggo/ochecore/ci.yml?branch=main&amp;event=push&amp;style=flat-square&amp;label=app%20build&amp;logo=rust"></a>
+  <a href="https://github.com/mondeggo/ochecore/actions/workflows/docker.yml"><img alt="Docker build status" src="https://img.shields.io/github/actions/workflow/status/mondeggo/ochecore/docker.yml?branch=main&amp;event=push&amp;style=flat-square&amp;label=docker%20build&amp;logo=docker"></a>
+  <a href="https://github.com/mondeggo/ochecore/releases/latest"><img alt="Latest stable release" src="https://img.shields.io/github/v/release/mondeggo/ochecore?display_name=tag&amp;sort=date&amp;style=flat-square&amp;label=release"></a>
+</p>
+
+<p align="center">
   <img alt="Built with Rust" src="https://img.shields.io/badge/built_with-Rust-b7410e?style=flat-square&amp;logo=rust">
   <img alt="Platform: Linux" src="https://img.shields.io/badge/platform-Linux-2f7bf5?style=flat-square&amp;logo=linux&amp;logoColor=white">
   <img alt="Interface: CLI and TUI" src="https://img.shields.io/badge/interface-CLI%20%2B%20TUI-0d9488?style=flat-square">

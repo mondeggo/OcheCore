@@ -1,4 +1,4 @@
-name: CI
+name: App build
 
 on:
   push:
@@ -29,7 +29,3 @@ jobs:
           cargo test --workspace --locked
           cargo build --locked -p oche-cli
           python3 scripts/smoke.py --binary target/debug/oche-core
-      - name: Build and test the runtime image without Internet access
-        run: |
-          docker build --tag ochecore:ci .
-          bash scripts/smoke_container.sh ochecore:ci

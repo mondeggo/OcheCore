@@ -3,9 +3,18 @@
 Workflows follow Oche's GitHub Releases and multi-architecture Docker pattern.
 Version tags publish releases; ordinary pushes/PRs run CI without publishing.
 
+The README's app and Docker badges track separate workflows on `main`:
+`ci.yml` compiles the app and runs formatting, lint, unit, and CLI/TUI checks;
+`docker.yml` builds the image and runs the offline container smoke test.
+The release badge shows the latest stable GitHub Release tag, not the version
+declared in Cargo.toml. Build status appears after the workflows run on GitHub;
+the release version appears after the first stable release is published.
+
 ## Setup
 
-1. Push to the chosen GitHub remote and enable Actions.
+1. Push to the chosen GitHub remote and enable Actions. The README badge URLs
+   currently target `mondeggo/ochecore`; update those URLs if using another owner
+   or repository name. Live badges require a publicly accessible repository.
 2. Allow `GITHUB_TOKEN` to write releases/packages. Permissions are declared per
    job; organization policy must allow them.
 3. GHCR needs no extra registry credentials. Set package visibility to public if
