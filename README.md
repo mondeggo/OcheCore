@@ -51,7 +51,6 @@ rustfmt, and Clippy. Development builds need a Linux C linker (for example,
 
 ```sh
 cargo build --locked --release -p oche-cli
-./target/release/oche-core init
 ./target/release/oche-core run
 ```
 
@@ -62,11 +61,13 @@ daemon is missing, the UI explains how to start it and reconnects automatically.
 `init` asks for a board name, listen IP address, port, and camera count. Press Enter
 to accept each default: `My dartboard`, `127.0.0.1`, `5180`, and one camera slot.
 It creates `$XDG_CONFIG_HOME/ochecore/board.toml`, or
-`~/.config/ochecore/board.toml`. Without a config, `run` and the local default
-command ask you to run `init`; they do not silently create one.
-`run --init` explicitly enables setup followed by automatic startup (the Docker
-default). Use `--config FILE` for a separate board. Remote management does not
-require a local configuration. Board ID
+`~/.config/ochecore/board.toml`. On first use, `oche-core run` explains that no
+configuration exists, opens the setup prompts, and starts the daemon immediately
+after saving. No separate `init` command or second `run` is needed. Without an
+interactive terminal, it logs that defaults are being saved and continues.
+Existing configurations are reused unchanged. `init` remains available when you
+want to configure a board without starting it. Use `--config FILE` for a separate
+board. Remote management does not require a local configuration. Board ID
 survives rename/restart; session ID changes on restart. A file lock prevents two
 daemons from owning one configuration.
 
@@ -243,7 +244,7 @@ That command continues running the daemon after the prompts; no second command
 is needed. Do not also start the normal Compose service at the same time.
 Existing configuration is reused without prompts or replacement. Invalid
 configuration still reports an error instead of resetting board identity.
-The image's default command is `run --init --init-bind 0.0.0.0`: the initial address
+The image's default command is `run --init-bind 0.0.0.0`: the initial address
 allows container networking and is only used when creating configuration.
 Subsequent starts honor the saved address. Explicit `--bind` / `--port` remain
 runtime overrides. Keep container port 5180 unless you also update the mapping

@@ -50,13 +50,12 @@ def main():
 
         def start(demo):
             # Initial bind must not override existing configuration.
-            process = subprocess.Popen(base + ["run", "--init", "--init-bind", "192.0.2.1"] + (["--demo"] if demo else []), stdout=subprocess.DEVNULL, stderr=log)
+            process = subprocess.Popen(base + ["run", "--init-bind", "192.0.2.1"] + (["--demo"] if demo else []), stdout=subprocess.DEVNULL, stderr=log)
             eventually(lambda: cli("status"))
             return process
 
         with open(Path(directory) / "daemon.log", "w+") as log:
             try:
-                assert "init" in cli("run", ok=False)["error"]
                 assert "init" in cli(ok=False)["error"]
                 assert not Path(config).exists()
                 assert "interactive terminal" in cli("init", ok=False)["error"]
@@ -112,18 +111,18 @@ def main():
                 ], True, config_path=str(wizard_path))
                 assert 'name = "Wizard board"' in wizard_path.read_text()
                 startup_path = str(Path(directory) / "startup.toml")
-                setup_terminal(["run", "--init"], [
+                setup_terminal(["run"], [
                     (b"Board name", b"\x04"),
                 ], False, config_path=startup_path)
                 assert not Path(startup_path).exists()
-                setup_terminal(["run", "--init"], [
+                setup_terminal(["run"], [
                     (b"Board name", b"Startup board\n"),
                     (b"Listen address [", b"\n"),
                     (b"Port [", b"\n"),
                     (b"Camera count", b"\n"),
                 ], True, config_path=startup_path, daemon_after=True)
                 wizard_path.write_text("invalid TOML [")
-                invalid_start = subprocess.run([binary, "--config", str(wizard_path), "run", "--init"], capture_output=True, text=True, timeout=5)
+                invalid_start = subprocess.run([binary, "--config", str(wizard_path), "run"], capture_output=True, text=True, timeout=5)
                 assert invalid_start.returncode != 0
                 assert wizard_path.read_text() == "invalid TOML ["
                 repaired = subprocess.run([binary, "--config", str(wizard_path), "--json", "config", "reset", "--yes", "--defaults"], check=True, capture_output=True, text=True)
@@ -181,8 +180,19 @@ def main():
                             rendered.extend(os.read(master, 65536))
                         return b"CONNECTED" in rendered
                     eventually(connected)
+                    def settle_ui():
+                        # A successful API response can precede the TUI's next draw.
+                        # Drain the PTY and wait for rendering to settle before the
+                        # next edit, so it uses the displayed state revision.
+                        deadline = time.monotonic() + 2
+                        while time.monotonic() < deadline:
+                            if not select.select([master], [], [], 0.2)[0]:
+                                return
+                            rendered.extend(os.read(master, 65536))
+
                     os.write(master, b"\r\x15Smoke room\r")
                     eventually(lambda: cli("status")["config"]["board"]["name"] == "Smoke room")
+                    settle_ui()
 
                     # SGR mouse input, as emitted by xterm.js and native terminals.
                     def click(column, row):
@@ -191,25 +201,31 @@ def main():
                     assert b"\x1b[?1006h" in rendered, "mouse reporting was not enabled"
                     click(14, 28)  # Stop in the footer.
                     eventually(lambda: cli("status")["state"] == "stopped")
+                    settle_ui()
                     click(4, 28)  # Start in the footer.
                     eventually(lambda: cli("status")["state"] == "running")
+                    settle_ui()
                     click(5, 10)  # Board name row.
                     os.write(master, b"\x15Mouse room")
                     click(20, 17)  # Save in the editor.
                     eventually(lambda: cli("status")["config"]["board"]["name"] == "Mouse room")
+                    settle_ui()
                     click(5, 11)  # Speed row.
                     click(28, 17)  # Next choice.
                     click(38, 17)  # Save choice.
                     eventually(lambda: cli("status")["config"]["detection"]["speed"] == "high")
+                    settle_ui()
                     os.write(master, b"+")
                     time.sleep(0.1)
                     os.write(master, b"\r")
                     eventually(lambda: len(cli("status")["config"]["cameras"]) == 2)
+                    settle_ui()
                     # Select the second camera using the same dashboard, then rotate it.
                     os.write(master, b"\x1b[B" * 6 + b"\x1b[C" * 4 + b"\r")
                     time.sleep(0.1)
                     os.write(master, b"\x1b[C\r")
                     eventually(lambda: cli("status")["config"]["cameras"][1]["rotation"] == 90)
+                    settle_ui()
                     click(13, 4)  # Events tab.
                     os.write(master, b"\x1b[F")  # End: oldest retained events.
                     click(3, 4)   # Back to Board.

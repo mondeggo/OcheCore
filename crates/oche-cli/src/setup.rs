@@ -30,7 +30,7 @@ pub fn initialize_for_run(
     );
     if !interactive {
         eprintln!(
-            "No interactive terminal: saving default settings. Use docker run -it (or docker compose run --service-ports --rm ochecore) for prompted first-run setup."
+            "No interactive terminal: saving default settings. Run oche-core run in an interactive terminal for prompted first-run setup."
         );
     }
     let options = Options {
