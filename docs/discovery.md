@@ -179,8 +179,34 @@ accuracy result: the session is small, it was used while developing the method
 singles do not record the ring, and no impact lies near a wire. Earlier
 cameras-off-axis failures in the 20/5 area came from fitting only the flight.
 
+Held-out check (2026-10-29, `visit2-heldout`, 180 s, auto white balance). Labels
+with inner/outer rings were written before analysis; commit `d996f16` ran
+unchanged with the `empty-calib-autowb` calibration. Only visits 1–6 fit in the
+recording; visits 7–8 were thrown after it ended.
+
+| Visit | Labels | Fused result |
+| --- | --- | --- |
+| 1 | T1, T10, 25 | T1, T10, SB (1.1 mm from the bull wire) |
+| 2 | 4, 5, T12 | S4, S5, T12 |
+| 3 | outer 18, outer 12, D20 | outer S18, outer S12, D20 |
+| 4 | T3, outer 19, inner 19 | **inner S3, 3.4 mm inside the treble**, outer S19, inner S19 |
+| 5 | outer 13, miss, D13 | outer S13, MISS (181 mm), D13 |
+| 6 | inner 15, inner 15, inner 10 | inner S15, inner S15, inner S10 |
+
+17 of 18 recorded darts match including the ring; one T3 was scored as S3, and
+nothing abstained. Every fused result used at least two cameras and 16 used
+three. The miss lies on the side expected from the known calibration bias
+(treble anchors mapping about 1.3 mm inward) and from fitting axes that include
+the flight. Eighteen darts from one thrower and board do not establish an
+accuracy rate.
+
+Each 180 s three-camera session uses about 1.4 GB; uncompressed debug overlays
+add about 2.6 MB per image. Saving overlays filled the 15 GB SD card once, so
+keep recordings and debug output on larger external storage.
+
 - [ ] Measure the installed board's double and treble wire diameters.
-- [ ] Record held-out labelled sessions, including wire-adjacent and grouped darts.
+- [ ] Record more held-out labelled sessions, including grouped darts and
+  partial takeout.
 - [ ] Record empty board, single throws, three-dart visits, grouped darts,
   wire-adjacent impacts, hands, early/partial/full takeout, and lighting changes.
 - [ ] Include bounced/falling darts, vibrating shafts, and occlusion where possible.
