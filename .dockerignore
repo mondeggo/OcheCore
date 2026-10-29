@@ -1,0 +1,16 @@
+**
+!Cargo.toml
+!Cargo.lock
+!rust-toolchain.toml
+!LICENSE
+!NOTICE
+!licenses/
+!licenses/**
+!crates/
+!crates/**
+!scripts/
+!scripts/third_party_notices.py
+!docker/
+!docker/**
+!dist/
+!dist/**

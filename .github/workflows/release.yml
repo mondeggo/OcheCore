@@ -1,0 +1,180 @@
+name: Release binaries and Docker image
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Compile Linux ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify release tag matches the application version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import os, tomllib
+          version = tomllib.load(open('Cargo.toml', 'rb'))['workspace']['package']['version']
+          assert os.environ['REF_TYPE'] == 'tag', 'Run releases from a vX.Y.Z tag, not a branch'
+          assert os.environ['RELEASE_TAG'] == f'v{version}', 'Tag must match Cargo.toml version'
+          PY
+      - name: Install native musl linker and pinned Rust target
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools
+          rustup show
+          rustup target add "$TARGET"
+      - name: Verify and compile a static executable
+        env:
+          TARGET: ${{ matrix.target }}
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo test --workspace --locked --target "$TARGET"
+          cargo build --release --locked --target "$TARGET" -p oche-cli
+          python3 scripts/smoke.py --binary "target/$TARGET/release/oche-core"
+      - name: Package binary, notices, documentation, and checksums
+        env:
+          TARGET: ${{ matrix.target }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          mkdir -p "dist/$ARCH"
+          cp "target/$TARGET/release/oche-core" "dist/$ARCH/oche-core"
+          cargo fetch --locked
+          python3 scripts/third_party_notices.py --target "$TARGET" --output "dist/$ARCH/THIRD_PARTY_NOTICES.txt"
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          python3 scripts/package_release.py --arch "$ARCH" --binary "dist/$ARCH/oche-core" --notices "dist/$ARCH/THIRD_PARTY_NOTICES.txt" --output "dist/$ARCH"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: dist/${{ matrix.arch }}/
+          if-no-files-found: error
+
+  image:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      HAS_DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: linux-*
+          path: artifacts
+      - name: Prepare the compiled binaries and image tags
+        id: image
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for arch in amd64 arm64; do
+            mv "artifacts/linux-$arch" "dist/$arch"
+            chmod +x "dist/$arch/oche-core"
+            (cd "dist/$arch" && sha256sum -c ./*.sha256)
+          done
+          if [[ -n "$DOCKERHUB_USERNAME" && "$HAS_DOCKERHUB_TOKEN" != true ]] || [[ -z "$DOCKERHUB_USERNAME" && "$HAS_DOCKERHUB_TOKEN" == true ]]; then
+            echo 'Set both DOCKERHUB_USERNAME and DOCKERHUB_TOKEN, or neither.' >&2
+            exit 1
+          fi
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          {
+            echo 'tags<<TAGS'
+            echo "$image:$RELEASE_TAG"
+            if [[ "$RELEASE_TAG" != *-* ]]; then echo "$image:latest"; fi
+            if [[ -n "$DOCKERHUB_USERNAME" ]]; then
+              hub="$DOCKERHUB_USERNAME/${GITHUB_REPOSITORY#*/}"
+              echo "${hub,,}:$RELEASE_TAG"
+              if [[ "$RELEASE_TAG" != *-* ]]; then echo "${hub,,}:latest"; fi
+            fi
+            echo TAGS
+          } >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - name: Smoke-test each compiled architecture offline
+        run: |
+          for arch in amd64 arm64; do
+            docker buildx build --platform "linux/$arch" --build-arg BINARY_SOURCE=prebuilt --load --tag "ochecore:test-$arch" .
+            bash scripts/smoke_container.sh "ochecore:test-$arch"
+          done
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Log in to Docker Hub when configured
+        if: env.DOCKERHUB_USERNAME != ''
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Publish images containing the tested release binaries
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          build-args: BINARY_SOURCE=prebuilt
+          push: true
+          tags: ${{ steps.image.outputs.tags }}
+          labels: |
+            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+  release:
+    needs: [build, image]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: linux-*
+          path: artifacts
+      - name: Publish GitHub Release and checksummed archives
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cp artifacts/linux-*/*.tar.gz artifacts/linux-*/*.sha256 release/
+          (cd release && cat ./*.sha256 > SHA256SUMS && sha256sum -c SHA256SUMS)
+          options=()
+          if [[ "$RELEASE_TAG" == *-* ]]; then options+=(--prerelease); fi
+          gh release view "$RELEASE_TAG" || gh release create "$RELEASE_TAG" --verify-tag --generate-notes "${options[@]}"
+          gh release upload "$RELEASE_TAG" release/* --clobber

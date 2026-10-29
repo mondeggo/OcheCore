@@ -1,14 +1,16 @@
-# Oche Core — Product and Engineering Roadmap
+# OcheCore — Product and Engineering Roadmap
 
 Date: 2026-10-29
 
-Status: proposed specification; no implementation or performance claims yet.
+Status: target specification; native service, CLI/TUI, persistence, and synthetic
+demo foundation implemented. Capture, calibration, vision, and verified Autodarts
+compatibility remain future work. No real-world performance claims yet.
 
 ## 1. Goal
 
-Build a lightweight, fully offline Rust service that turns one to four USB cameras into automatic steel-tip dart scoring. Operators must be able to configure, calibrate, monitor, and control the board from terminal commands or an interactive terminal UI. Existing applications should be able to replace their local Autodarts board endpoint with Oche Core without code changes, within an explicitly tested compatibility profile.
+Build a lightweight, fully offline Rust service that turns one to four USB cameras into automatic steel-tip dart scoring. Operators must be able to configure, calibrate, monitor, and control the board from terminal commands or an interactive terminal UI. Existing applications should be able to replace their local Autodarts board endpoint with OcheCore without code changes, within an explicitly tested compatibility profile.
 
-Working name: **Oche Core**. Executable: `oche-core`. Keep the vision engine independent from the existing Oche game UI.
+Project name: **OcheCore**. Executable: `oche-core`. Keep the vision engine independent from the Oche game UI.
 
 The release has three equally important requirements: reliable scoring, bounded resource use, and verified API compatibility. A fast detector without correct event behavior is not a drop-in replacement.
 
@@ -77,7 +79,7 @@ A public local-API client provides starting evidence for `PUT /api/start`, `PUT 
 - Keep native Oche extensions outside compatibility payloads unless client tolerance is verified.
 - Support polling and streaming paths actually used by the target integrations.
 - Advertise Oche identity honestly; document the emulated protocol profile separately.
-- Run unmodified target clients against Oche Core in integration tests.
+- Run unmodified target clients against OcheCore in integration tests.
 - Track compatibility per client and version: untested, partial, or verified.
 - Offline local compatibility does not imply compatibility with cloud authentication, hosted matches, or the Autodarts cloud service.
 - Release the compatibility layer as a required milestone, not a deferred enhancement.
@@ -266,8 +268,8 @@ Effort depends on captured footage, target hardware, and protocol discovery. Use
 
 ### M1 — Service, CLI, and compatibility scaffold
 
-- [ ] Implement Rust workspace, configuration, board identity, foreground service, and bounded event delivery.
-- [ ] Implement terminal status/start/stop/reset and remote TUI skeleton.
+- [x] Implement Rust workspace, configuration, board identity, foreground service, and bounded native event delivery.
+- [x] Implement terminal status/start/stop/reset and remote TUI with configuration editing.
 - [ ] Build native API and Autodarts adapter against synthetic/replayed events.
 - [ ] Validate the supplied CLI interaction model and port-conflict diagnostics.
 
@@ -365,4 +367,8 @@ These sources guide discovery; none substitutes for testing the installed instan
 - [Local API client source](https://github.com/tnolle/autodarts-local-api/blob/main/main.py) — concrete integration evidence for selected HTTP/WebSocket operations; validate against the installed version.
 - [Linux V4L2 memory-mapped streaming](https://cdn.kernel.org/doc/html/latest/userspace-api/media/v4l/mmap.html) — capture-buffer lifecycle and I/O design.
 
-First implementation priority: finish M0 and demonstrate the compatibility scaffold in M1 before investing in advanced detection. Then build and measure the vision engine against real recordings from the existing camera installation.
+Implementation proceeds in two tracks: native service, terminal controls, and
+release packaging can be verified without recordings; hardware and protocol
+discovery supplies evidence for later compatibility, calibration, and vision.
+M1 still requires its unchanged-client compatibility exit. Build and measure
+vision against real recordings when the camera installation is available.

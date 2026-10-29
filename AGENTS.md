@@ -8,7 +8,7 @@ inputs and evidence. The roadmap is a proposed specification, not proof of
 implemented behavior. Keep documentation explicit about what is planned,
 implemented, and verified.
 
-Oche Core is an offline Rust board service with CLI/TUI control, one to four USB
+OcheCore is an offline Rust board service with CLI/TUI control, one to four USB
 cameras, a native API, and a versioned Autodarts compatibility adapter. Game rules
 and player management belong to consuming applications.
 
@@ -46,9 +46,10 @@ and player management belong to consuming applications.
 
 ## Development and verification
 
-The initial repository contains documents only. Do not report build or test
-success before a Rust workspace and toolchain exist. Once introduced, pin the
-toolchain, commit `Cargo.lock`, and document native build prerequisites.
+The control workspace, CLI, and TUI are implemented. Capture, calibration, vision,
+and Autodarts compatibility remain deferred. Keep the pinned toolchain and
+`Cargo.lock` current, and document native build prerequisites. Hardware recordings
+are not required for work on native controls or terminal interfaces.
 
 For Rust changes, use the following checks when the workspace supports them:
 
@@ -57,6 +58,11 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 ```
+
+For CLI/TUI behavior, build `oche-cli` and run
+`python3 scripts/smoke.py --binary target/debug/oche-core`. For container changes,
+build the image and run `bash scripts/smoke_container.sh IMAGE`. Release workflows
+must package tested binaries and preserve license/dependency notices.
 
 Add feature-specific and hardware checks where relevant. Test observable behavior:
 state transitions, score boundaries, persistence, event order, reconnects, slow

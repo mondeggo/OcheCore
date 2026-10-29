@@ -1,0 +1,25 @@
+services:
+  ochecore:
+    image: ${OCHECORE_IMAGE:-ochecore:local}
+    build:
+      context: .
+    restart: unless-stopped
+    ports:
+      - "${OCHECORE_BIND:-127.0.0.1}:${OCHECORE_PORT:-3180}:3180"
+    volumes:
+      - board-data:/data
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/oche-core", "status", "--json"]
+      interval: 15s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+    stop_grace_period: 10s
+
+volumes:
+  board-data:

@@ -8,24 +8,22 @@ versions, and the source of evidence when filling it in.
 
 As of 2026-10-29:
 
-- The repository contains a proposed specification and setup documentation.
+- The repository implements the native service, CLI, TUI, configuration, identity,
+  event stream, and synthetic demo mode. Recordings are not a prerequisite for
+  this foundation. Capture, calibration, vision, and verified Autodarts
+  compatibility remain later work.
 - The roadmap includes supplied Autodarts CLI help. The operator-provided HTTP
   host was reachable during discovery; its Oche Supervisor page and
   `GET /autodarts/status` both reported Autodarts **2.0.2**, installed and running
   in headless mode. This is a supervisor report; direct binary version output
   and the board HTTP/WebSocket contract still need verification.
-- `GET /ochecore/status` reported an existing **OcheCore 0.1.3** service running.
-  The host's settings page and `/ochecore/ui/` describe Autodarts connection,
-  WLED lighting, and caller functions. Establish its relationship and naming
-  boundary with the proposed scoring engine before integration. Its existence
-  does not establish an implementation of this repository's roadmap.
 - The roadmap refers to `raspy-darts` and cameras with duplicate serial numbers;
   no hardware inventory or connection details have been verified here.
-- On this development host, `rustc`, `cargo`, and `rustup` were not available on
-  the shell PATH during setup. Check for an existing installation before
-  installing a toolchain.
-- No recordings, ground-truth labels, calibration data, resource measurements,
-  or integration test results are present.
+- Rust 1.90.0, Cargo, rustfmt, and Clippy are installed on the development host;
+  the repository pins the toolchain and commits its resolved dependencies.
+- No recordings, ground-truth labels, calibration data, hardware measurements,
+  or third-party compatibility test results are present. Native service and
+  CLI/TUI integration tests run independently of those inputs.
 
 ## Inputs from the operator
 
@@ -38,9 +36,9 @@ As of 2026-10-29:
 | Camera data | Timestamped sessions for each available camera count, capture settings, and independent labels | Develop and evaluate calibration, detection, and removal |
 | Product priorities | One-camera coverage versus abstention, acceptable manual calibration effort, and desired latency/resource limits | Resolve tradeoffs and set measured release gates |
 
-HTTP access is established. SSH access, the target machine's inventory, the Oche
-source revision, and the existing OcheCore source location remain unknown. The
-host address and raw responses are intentionally kept out of version control;
+HTTP access is established. SSH access, the target machine's inventory, and the
+installed Oche source revision remain unknown. The host address and raw responses
+are intentionally kept out of version control;
 the evidence above records the relevant paths and sanitized observations. Only
 HTTP GET requests were used; no service controls were invoked.
 
@@ -80,7 +78,8 @@ when the operator can release the devices from the current service.
 - [ ] Save a reproducible hardware/software report.
 - [ ] Benchmark YUYV and MJPEG capture/decode for the available camera counts.
 - [ ] Record delivered FPS, CPU/RSS, drops, frame age/skew, and USB failures.
-- [ ] Choose and pin the Rust toolchain and initial dependencies; document FFI.
+- [x] Choose and pin the Rust toolchain and initial dependencies; document FFI.
+  See [engineering decisions](architecture.md).
 
 ## Compatibility evidence
 
@@ -90,7 +89,6 @@ and client code before treating any route or payload as a contract.
 | Integration | Version/commit | Autodarts profile | Fixtures | Verification |
 | --- | --- | --- | --- | --- |
 | Oche | Unknown | Autodarts 2.0.2 reported by Supervisor; contract pending | Missing | Untested |
-| Existing OcheCore connection/lighting/caller service | 0.1.3 reported by Supervisor | To discover | Missing | Untested |
 | Additional clients | To identify | Unknown | Missing | Untested |
 
 - [ ] Inventory routes, methods, headers, payloads, status codes, and errors.
@@ -121,13 +119,12 @@ version, lighting/placement notes, and independently measured impact/event label
 Resolve these from the collected evidence and operator priorities:
 
 - [ ] Exact compatibility profile and clients required for the first release.
-- [ ] Relationship and naming boundary with the already deployed OcheCore 0.1.3.
 - [ ] One-camera acceptance/abstention policy.
 - [ ] Initial manual calibration workflow and acceptable setup effort.
 - [ ] Numerical calibration, accuracy, coverage, CPU/RAM, and latency budgets per
   camera count, with a defined measurement method.
 
 M0 exits when the hardware report, baseline measurements, compatibility matrix,
-dependency decision, and replay corpus are reproducible. M1's native scaffold can
-be built in parallel, but its compatibility exit requires an unchanged target
-client to receive a synthetic visit, observe takeout, and reconnect correctly.
+dependency decision, and replay corpus are reproducible. M1's native foundation
+is implemented independently; its compatibility exit still requires an unchanged
+target client to receive a synthetic visit, observe takeout, and reconnect correctly.

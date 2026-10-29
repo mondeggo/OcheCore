@@ -1,0 +1,32 @@
+[package]
+name = "oche-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "oche-core"
+path = "src/main.rs"
+
+[dependencies]
+oche-domain.workspace = true
+oche-engine.workspace = true
+oche-api.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+crossterm.workspace = true
+futures-util.workspace = true
+ratatui.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

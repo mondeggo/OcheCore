@@ -1,0 +1,12 @@
+Required Notice: Copyright (c) 2026 OcheCore contributors.
+
+OcheCore is provided under the PolyForm Noncommercial License 1.0.0.
+See LICENSE for the complete terms.
+
+Commercial use outside the permissions in that license requires a separate
+written agreement with the relevant copyright holder(s), arranged through the
+project maintainer before that use begins. No commercial rights are granted
+merely by downloading the source code, release binaries, or container image.
+
+Third-party components retain their own licenses. Release archives and images
+include THIRD_PARTY_NOTICES.txt for the dependencies of the compiled executable.

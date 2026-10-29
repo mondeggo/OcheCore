@@ -1,5 +1,8 @@
 # Rust build output; Cargo.lock is intentionally tracked.
 /target/
+/dist/
+__pycache__/
+*.pyc
 
 # Local configuration, captures, and generated reports.
 /.env

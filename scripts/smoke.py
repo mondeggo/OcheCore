@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""Exercise the compiled CLI, daemon, SSE, persistence, and real terminal UI."""
+import argparse
+import fcntl
+import json
+import os
+from pathlib import Path
+import pty
+import select
+import socket
+import struct
+import subprocess
+import tempfile
+import termios
+import time
+import urllib.request
+
+
+def eventually(check, timeout=10):
+    deadline = time.monotonic() + timeout
+    last = None
+    while time.monotonic() < deadline:
+        try:
+            value = check()
+            if value:
+                return value
+        except (OSError, AssertionError, subprocess.SubprocessError) as error:
+            last = error
+        time.sleep(0.05)
+    raise AssertionError(f"Timed out waiting for condition: {last}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--binary", type=Path, required=True)
+    args = parser.parse_args()
+    binary = str(args.binary.resolve())
+    with socket.socket() as reservation:
+        reservation.bind(("127.0.0.1", 0))
+        port = reservation.getsockname()[1]
+    with tempfile.TemporaryDirectory(prefix="ochecore-smoke-") as directory:
+        config = str(Path(directory) / "board.toml")
+        base = [binary, "--config", config, "--port", str(port)]
+        daemon = None
+
+        def cli(*arguments, ok=True):
+            result = subprocess.run(base + ["--json", *arguments], text=True, capture_output=True, timeout=5)
+            assert (result.returncode == 0) == ok, (arguments, result.stdout, result.stderr)
+            return json.loads(result.stdout if ok else result.stderr)
+
+        def start(demo):
+            process = subprocess.Popen(base + ["run"] + (["--demo"] if demo else []), stdout=subprocess.DEVNULL, stderr=log)
+            eventually(lambda: cli("status"))
+            return process
+
+        with open(Path(directory) / "daemon.log", "w+") as log:
+            try:
+                daemon = start(True)
+                initial = cli("status")
+                assert initial["state"] == "stopped"
+                duplicate = subprocess.run(base + ["run"], capture_output=True, text=True, timeout=5)
+                assert duplicate.returncode != 0 and "in use" in duplicate.stderr
+                conflict = subprocess.run([binary, "--config", str(Path(directory) / "second.toml"), "--port", str(port), "run"], capture_output=True, text=True, timeout=5)
+                assert conflict.returncode != 0 and "cannot listen" in conflict.stderr
+                assert "not_implemented" in cli("calibrate", "--all", ok=False)["error"]
+                assert cli("config", "validate")["valid"]
+                assert cli("cameras", "list")["capture_available"] is False
+
+                events = subprocess.Popen(base + ["events", "--json", "--count", "4"], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                try:
+                    assert select.select([events.stdout], [], [], 5)[0], "missing initial event"
+                    first = json.loads(events.stdout.readline())
+                    assert first["kind"] == "snapshot"
+                    cli("start")
+                    cli("demo", "throw", "T20")
+                    cli("demo", "takeout")
+                    output, errors = events.communicate(timeout=5)
+                    assert events.returncode == 0, errors
+                    assert [json.loads(line)["kind"] for line in output.splitlines()] == ["started", "throw_accepted", "takeout_completed"]
+                finally:
+                    if events.poll() is None:
+                        events.kill()
+                        events.wait()
+
+                cli("demo", "throw", "D20")
+                reset = cli("reset")
+                assert reset["physical_darts"] == 1 and reset["throws"] == []
+                cli("demo", "takeout")
+                renamed = cli("config", "set", "board.name", "Smoke board")
+                assert renamed["config"]["board"]["id"] == initial["config"]["board"]["id"]
+                assert cli("stop")["state"] == "stopped"
+                assert cli("wake")["state"] == "running"
+
+                # The actual TUI must edit through the daemon and restore terminal state.
+                master, slave = pty.openpty()
+                fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 110, 0, 0))
+                before = termios.tcgetattr(slave)
+                ui = subprocess.Popen(base + ["remote"], stdin=slave, stdout=slave, stderr=slave, env={**os.environ, "TERM": "xterm-256color"})
+                rendered = bytearray()
+                try:
+                    def connected():
+                        if select.select([master], [], [], 0.1)[0]:
+                            rendered.extend(os.read(master, 65536))
+                        return b"CONNECTED" in rendered
+                    eventually(connected)
+                    os.write(master, b"3\r\x15Smoke room\r")
+                    eventually(lambda: cli("status")["config"]["board"]["name"] == "Smoke room")
+                    os.write(master, b"q")
+                    assert ui.wait(timeout=5) == 0
+                    assert termios.tcgetattr(slave) == before, "terminal state not restored"
+                finally:
+                    if ui.poll() is None:
+                        ui.kill()
+                        ui.wait()
+                    os.close(master)
+                    os.close(slave)
+
+                # Shutdown must complete even while an SSE consumer remains connected.
+                stream = urllib.request.urlopen(f"http://127.0.0.1:{port}/api/v1/events", timeout=5)
+                stream.readline()
+                daemon.terminate()
+                assert daemon.wait(timeout=5) == 0
+                stream.close()
+                daemon = start(False)
+                restarted = cli("status")
+                assert restarted["config"]["board"]["name"] == "Smoke room"
+                assert restarted["config"]["board"]["id"] == initial["config"]["board"]["id"]
+                assert restarted["session_id"] != initial["session_id"]
+                assert restarted["physical_darts"] is None
+                assert "disabled" in cli("demo", "throw", "T20", ok=False)["error"]
+                print("PASS: CLI, TUI editing/restoration, native events, identity persistence, demo isolation, port/ownership conflicts, and streaming shutdown")
+            except BaseException:
+                log.flush()
+                log.seek(0)
+                print(log.read())
+                raise
+            finally:
+                if daemon is not None and daemon.poll() is None:
+                    daemon.terminate()
+                    daemon.wait(timeout=5)
+
+
+if __name__ == "__main__":
+    main()

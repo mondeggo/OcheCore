@@ -1,0 +1,35 @@
+# Control foundation decisions
+
+Date: 2026-10-29
+
+Controls and terminal interfaces can be implemented and verified before recordings
+are available. Hardware discovery gates capture/calibration, scoring validation,
+and compatibility claims; it does not gate the native control foundation.
+
+- **Rust 1.90.0 / edition 2024:** pinned toolchain and committed lockfile. Builds
+  use `--locked`; runtime performs no downloads.
+- **Four crates:** domain owns validated configuration/wire types; engine owns
+  persistence/serialized state; API owns HTTP/SSE; CLI owns both terminal clients.
+  Future vision backends feed the engine independently of terminal/network code.
+- **Axum/Tokio:** bounded admission and one command mutex. Persistent file I/O
+  runs on blocking workers. Subscriber streams never hold the engine lock.
+- **Ratatui/Crossterm:** keyboard navigation, responsive network worker, bounded
+  request channel, and terminal restoration. Image support can be added later.
+- **TOML/UUID/atomic files:** schema version 1, board ID generated once, validated
+  atomic replacement with file/directory sync, and a separate lifetime lock file.
+  Native UUIDs do not predetermine a future compatibility adapter's representation.
+- **Explicit demo mode:** every throw is synthetic. Normal mode reports unknown
+  occupancy and unavailable capture/calibration/vision. Camera modes are requested
+  configuration, not verified hardware capabilities.
+- **Static musl releases:** Linux AMD64/ARM64 executables without a host glibc
+  requirement. The non-root Docker image packages the tested executable and
+  license notices with a writable data volume.
+- **Native boundaries:** workspace crates forbid unsafe Rust. Dependencies still
+  call OS APIs for networking, terminal control, random IDs, and file locking.
+  `fs2` and `tempfile` isolate locking/atomic-file operations. Musl is the release
+  C runtime; there is no OpenCV, camera SDK, or decoder FFI yet.
+
+Standby changes the control lifecycle only; speed presets have no processing
+effect until capture/vision exists. No Autodarts adapter is advertised before
+observed contracts and unchanged-client tests exist. These limits are visible
+in both the UI and API.
