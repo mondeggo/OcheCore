@@ -23,8 +23,8 @@
   <g id="simplified-board" transform="translate(128 134)">
     <circle r="72" fill="#f0e3ce" stroke="#8f2837" stroke-width="8"/>
     <circle r="47" fill="none" stroke="#8f2837" stroke-width="7"/>
-    <circle r="25" fill="#18543b"/>
-    <circle r="11" fill="#8f2837"/>
+    <circle r="19" fill="#18543b"/>
+    <circle r="7" fill="#8f2837"/>
   </g>
   <!-- Point at the bull; barrel, shaft, and flights extend toward the upper right. -->
   <g id="dart" transform="translate(128 134) rotate(-45)">
