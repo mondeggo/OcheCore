@@ -36,6 +36,6 @@ VOLUME ["/data"]
 EXPOSE 3180
 LABEL org.opencontainers.image.title="OcheCore" \
       org.opencontainers.image.description="Offline board control service and terminal UI" \
-      org.opencontainers.image.licenses="PolyForm-Noncommercial-1.0.0"
+      org.opencontainers.image.licenses="AGPL-3.0-only"
 ENTRYPOINT ["/usr/local/bin/oche-core"]
 CMD ["--bind", "0.0.0.0", "run"]

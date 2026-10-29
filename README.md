@@ -14,7 +14,7 @@
   <img alt="Built with Rust" src="https://img.shields.io/badge/built_with-Rust-b7410e?style=flat-square&amp;logo=rust">
   <img alt="Platform: Linux" src="https://img.shields.io/badge/platform-Linux-2f7bf5?style=flat-square&amp;logo=linux&amp;logoColor=white">
   <img alt="Interface: CLI and TUI" src="https://img.shields.io/badge/interface-CLI%20%2B%20TUI-0d9488?style=flat-square">
-  <a href="LICENSE"><img alt="License: PolyForm Noncommercial" src="https://img.shields.io/badge/license-PolyForm%20Noncommercial-3a3a3a?style=flat-square"></a>
+  <a href="LICENSE"><img alt="License: AGPL v3" src="https://img.shields.io/badge/license-AGPL%20v3-3a3a3a?style=flat-square"></a>
   <img alt="Status: early development" src="https://img.shields.io/badge/status-early%20development-d69e2e?style=flat-square">
 </p>
 
@@ -205,8 +205,6 @@ Use Conventional Commits, such as `feat(cli): add board controls`.
 
 ## License
 
-Source-available under [PolyForm Noncommercial License 1.0.0](LICENSE), permitting
-personal, noncommercial, and specified educational/institutional uses under its
-terms. Commercial uses outside those permissions require a separate written
-agreement with the relevant copyright holder(s), arranged through the project
-maintainer. See [NOTICE](NOTICE). Dependencies retain their own licenses.
+OcheCore is licensed under the [GNU Affero General Public License version 3](LICENSE)
+(`AGPL-3.0-only`). Personal, educational, and commercial use are permitted under
+its terms. See [NOTICE](NOTICE). Dependencies retain their own licenses.
