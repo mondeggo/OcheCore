@@ -1,0 +1,27 @@
+# Rust build output; Cargo.lock is intentionally tracked.
+/target/
+
+# Local configuration, captures, and generated reports.
+/.env
+/.env.*
+!/.env.example
+/board.toml
+/config.local.toml
+/recordings/
+/sessions/
+/artifacts/
+*.log
+
+# Editor and operating-system metadata.
+/.idea/
+/.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Local agent/runtime state.
+/.agents/
+/.aws/
+/.codex/
