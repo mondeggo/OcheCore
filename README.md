@@ -301,6 +301,12 @@ The smoke test exercises CLI/TUI editing, terminal restoration, events,
 persistence, port conflicts, and shutdown with connected clients. It needs Linux,
 Python 3, and permission to bind loopback sockets.
 
+Run `./clean.sh` to remove local `target/`, `dist/` (including compiled binaries
+and release archives), and `scripts/__pycache__/`. Preview with
+`./clean.sh --dry-run`. Stop builds before cleaning. Source, configuration,
+data, recordings, and Docker resources are preserved; custom Cargo target
+directories outside the checkout are untouched.
+
 GitHub Actions checks pushes/PRs. A `vX.Y.Z` tag matching Cargo.toml builds and tests
 static Linux AMD64/ARM64 binaries, creates archives/checksums, and publishes a
 GitHub Release and matching Docker image. See [release setup](docs/releases.md),
