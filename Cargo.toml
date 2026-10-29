@@ -3,6 +3,7 @@ members = [
     "crates/oche-domain",
     "crates/oche-calibration",
     "crates/oche-vision",
+    "crates/oche-replay",
     "crates/oche-engine",
     "crates/oche-api",
     "crates/oche-cli",
@@ -20,6 +21,8 @@ license = "AGPL-3.0-only"
 oche-domain = { path = "crates/oche-domain" }
 oche-engine = { path = "crates/oche-engine" }
 oche-api = { path = "crates/oche-api" }
+oche-calibration = { path = "crates/oche-calibration" }
+oche-vision = { path = "crates/oche-vision" }
 anyhow = "1.0"
 async-stream = "0.3"
 axum = "0.8"
@@ -35,6 +38,7 @@ tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "sync", "signal", "time"] }
 toml = "0.8"
 uuid = { version = "1", features = ["v4", "serde"] }
+zune-jpeg = "0.5.15"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

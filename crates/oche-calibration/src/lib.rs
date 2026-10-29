@@ -5,6 +5,8 @@
 //! normalized direct linear transform. Lens distortion is not modelled yet: fit
 //! residuals on real frames include it and must be checked before trusting a fit.
 
+pub mod detect;
+
 use oche_domain::board::{BoardLine, BoardPoint};
 use serde::{Deserialize, Serialize};
 

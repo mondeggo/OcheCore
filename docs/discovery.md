@@ -142,6 +142,24 @@ controls, and lighting:
 | `visit1-labelled` | Four visits incl. bounce-outs with re-throws, a dart outside the scoring area, and a flight occluding one camera; fixed 5500 K | Thrower's visit labels typed after the session; singles do not record inner/outer |
 | `empty-calib-autowb` | 5 s empty board, auto white balance | Not applicable |
 
+First automatic calibration (2026-10-29, `oche-replay calibrate` on frame 100 of
+`empty-calib-autowb`, WDF nominal radii, no lens model, hints at the printed 20):
+
+| Camera | Anchors | Fit RMS / max | Trebles vs doubles-only fit, RMS / max |
+| --- | --- | --- | --- |
+| 1 | 40 | 1.29 / 2.56 mm | 1.90 / 3.27 mm |
+| 2 | 40 | 1.42 / 2.99 mm | 2.25 / 3.78 mm |
+| 3 | 40 | 1.24 / 2.76 mm | 1.86 / 3.48 mm |
+
+All three overlays place S20 next to the printed 20. Residuals are mostly a
+radial bias repeated on every camera: double-band middles map about 0.8 mm
+outside their nominal radius and treble-band middles about 1.3 mm inside, with
+about 0.7 mm scatter. Either the installed board's ring radii differ from the
+WDF nominal values or colour erosion differs between the rings. Measuring the
+board will separate the two. These are fit statistics against detected anchors,
+not independent physical holdout points or scoring accuracy.
+
+- [ ] Measure the installed board's double and treble wire diameters.
 - [ ] Record empty board, single throws, three-dart visits, grouped darts,
   wire-adjacent impacts, hands, early/partial/full takeout, and lighting changes.
 - [ ] Include bounced/falling darts, vibrating shafts, and occlusion where possible.

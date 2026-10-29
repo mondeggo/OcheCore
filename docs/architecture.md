@@ -82,6 +82,26 @@ and compatibility claims; it does not gate the native control foundation.
   least three consistent views remain; otherwise it abstains. With exactly
   two lines, agreement is reported as unverified. Angle and residual limits are
   required inputs without defaults until recordings justify values.
+- **Anchor detection (`oche-calibration::detect`):** from one empty-board frame,
+  segments red/green pixels, bridges radial wires by dilation, identifies the
+  double ring, treble ring, and bull as connected regions, and casts 1440 rays
+  from the projected centre. Rays through the centre are images of board radii,
+  so red/green changes along each band locate the radial wires. Anchors are the
+  middles of the double and treble bands at each wire (40 per camera); band
+  edges were rejected because colour classification eroded each band to roughly
+  half its nominal width on real frames. A pixel near the 20 resolves the
+  two-segment colour symmetry. The centre is re-estimated from the fit until it
+  moves less than 0.05 px. Thresholds come from one lighting setup.
+- **JPEG decoding (`oche-vision::image`):** `zune-jpeg` 0.5.15 with `zune-core`
+  0.5.3 (MIT OR Apache-2.0 OR Zlib), pure Rust. Its SIMD paths use `unsafe`
+  for platform intrinsics inside the dependency; workspace crates remain
+  `unsafe`-free. Frame sides are capped at 4096 px. Chosen over
+  `jpeg-decoder` for active maintenance; decode cost on the Pi is not yet
+  measured. Only development tools depend on it so far.
+- **Replay tooling (`oche-replay`):** reads discovery recordings (`camN.mjpeg`
+  plus `v4l2-ctl --verbose` logs) and provides `info`, `frame`, `probe`, and
+  `calibrate` commands. Overlays are written as uncompressed PNG by a small
+  in-crate encoder. Development use only; not packaged in releases.
 
 Standby changes the control lifecycle only; speed presets have no processing
 effect until capture/vision exists. No Autodarts adapter is advertised before

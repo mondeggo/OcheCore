@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 oche-domain.workspace = true
 serde.workspace = true
+zune-jpeg.workspace = true
 
 [lints]
 workspace = true

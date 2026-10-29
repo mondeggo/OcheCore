@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 oche-domain.workspace = true
+oche-vision.workspace = true
 serde.workspace = true
 
 [lints]

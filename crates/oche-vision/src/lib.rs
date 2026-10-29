@@ -11,6 +11,8 @@
 //! abstains. Poor observations should be filtered before fusion by their own
 //! feature quality.
 
+pub mod image;
+
 use oche_domain::board::{BoardLine, BoardPoint};
 use serde::{Deserialize, Serialize};
 
