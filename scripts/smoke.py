@@ -162,7 +162,7 @@ def main():
                             rendered.extend(os.read(master, 65536))
                         return b"CONNECTED" in rendered
                     eventually(connected)
-                    os.write(master, b"3\r\x15Smoke room\r")
+                    os.write(master, b"\r\x15Smoke room\r")
                     eventually(lambda: cli("status")["config"]["board"]["name"] == "Smoke room")
 
                     # SGR mouse input, as emitted by xterm.js and native terminals.
@@ -174,8 +174,6 @@ def main():
                     eventually(lambda: cli("status")["state"] == "stopped")
                     click(4, 28)  # Start in the footer.
                     eventually(lambda: cli("status")["state"] == "running")
-                    click(3, 5)   # Overview tab.
-                    click(25, 5)  # Configuration tab.
                     click(5, 10)  # Board name row.
                     os.write(master, b"\x15Mouse room")
                     click(20, 17)  # Save in the editor.
@@ -184,6 +182,18 @@ def main():
                     click(28, 17)  # Next choice.
                     click(38, 17)  # Save choice.
                     eventually(lambda: cli("status")["config"]["detection"]["speed"] == "high")
+                    os.write(master, b"+")
+                    time.sleep(0.1)
+                    os.write(master, b"\r")
+                    eventually(lambda: len(cli("status")["config"]["cameras"]) == 2)
+                    # Select the second camera using the same dashboard, then rotate it.
+                    os.write(master, b"\x1b[B" * 6 + b"\x1b[C" * 4 + b"\r")
+                    time.sleep(0.1)
+                    os.write(master, b"\x1b[C\r")
+                    eventually(lambda: cli("status")["config"]["cameras"][1]["rotation"] == 90)
+                    click(13, 4)  # Events tab.
+                    os.write(master, b"\x1b[F")  # End: oldest retained events.
+                    click(3, 4)   # Back to Board.
                     click(44, 28)  # Quit in the footer.
                     assert ui.wait(timeout=5) == 0
                     assert termios.tcgetattr(slave) == before, "terminal state not restored"

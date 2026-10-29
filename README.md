@@ -129,21 +129,32 @@ JSON goes to stdout; errors/diagnostics go to stderr. Exit codes: `0` success,
 
 ## Terminal UI
 
-Screens: **Overview**, **Cameras**, **Configuration**, **Events**, **Help**.
-Works over SSH without terminal image support.
+Two screens: **Board** and **Events**. Board groups the three dart slots, service
+status, board/network/detection settings, and all camera controls in one dashboard.
+Add up to four cameras with **+ Add**; **- Remove last** removes the highest slot
+only after saving the proposed count. Click a camera's device or its width, height,
+FPS, and rotation controls to edit. All existing settings remain available.
+
+Events shows every retained native event (up to 64), newest first, with sequence,
+time, session/board IDs, state, revision, scene, physical occupancy, and visit.
+Scroll to reach older entries. For full event payloads or an ongoing diagnostic
+recording, use `oche-core events --json` with the same host/port.
+Both screens work over SSH without terminal image support.
 
 Mouse support works in terminals that forward mouse events, including xterm.js:
 click tabs and the Start / Stop / Reset / Wake / Quit controls, click a setting
-to edit it, or select a camera and click its field. Scroll over camera/settings
-rows to change selection. Editors provide Previous / Next choices and Save /
+to edit it, or click a camera field directly. The wheel scrolls the dashboard
+or event history. Editors provide Previous / Next choices and Save /
 Cancel buttons. Text values still use the keyboard. Mouse capture is released
 when the UI closes; keyboard controls remain available.
 
 | Key | Action |
 | --- | --- |
-| Tab / Shift-Tab, or 1–5 | Switch screen |
+| Tab / Shift-Tab, or 1 / 2 | Switch Board / Events |
 | s / x / r / w | Start / stop / reset visit / wake |
-| Up / Down | Select camera or setting |
+| Up / Down | Select camera or setting; scroll in Events |
+| PageUp / PageDown, Home / End | Scroll page, jump to top / bottom |
+| + / - | Add camera / remove last (review count, then save) |
 | Left / Right | Select camera field or cycle editor choices |
 | Enter / Escape | Edit or save / cancel |
 | Ctrl-U | Clear text while editing |
@@ -157,6 +168,10 @@ closing the TUI leaves the daemon running.
 Edits check the state revision to detect concurrent changes. Keyboard input stays
 responsive during network failures. Stale data is labeled disconnected and
 controls are disabled until connectivity returns.
+
+Detection options and their calibration requirements are described in
+[the detection proposal](docs/detection-algorithms.md). They are planned methods,
+not active detector choices; live capture and calibration are still unavailable.
 
 ## Try a visit without cameras
 

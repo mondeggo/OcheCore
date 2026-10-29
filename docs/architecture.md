@@ -18,7 +18,8 @@ and compatibility claims; it does not gate the native control foundation.
   [IANA service registry](https://www.iana.org/assignments/service-names-port-numbers/service-names-port-numbers.csv),
   where 5180 was unassigned. Saved ports and explicit overrides remain supported.
 - **Ratatui/Crossterm:** keyboard navigation, responsive network worker, bounded
-  request channel, and terminal restoration. Mouse capture routes clicks through
+  request channel, and terminal restoration. Two screens group controls and all
+  settings in Board, with a separate scrollable Events history. Mouse capture routes clicks through
   the same commands and configuration editor as the keyboard. Click targets are
   rebuilt from each rendered layout; modal editors block background clicks and
   disconnected controls cannot submit changes. Image support can be added later.

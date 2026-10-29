@@ -128,12 +128,20 @@ Provide an explicit `update` command after release packaging exists. Updates req
 
 ### TUI screens
 
-1. **Overview:** board name/ID, endpoint, engine state, camera health, current three-dart visit, last event, and processing latency.
-2. **Cameras:** dynamic rows for camera slots 1–4; device selector, supported resolution/FPS selectors, negotiated format, actual FPS, stopped/running/standby/disconnected/error state.
-3. **Calibration:** select camera, edit reference lines/points, lens parameters, inspect residuals, save or cancel.
-4. **Motion and detection:** current motion/stability/hand/takeout state, changed area, accepted axes, estimated impacts, and rejected observations.
-5. **Configuration:** identity, binding, speed preset, standby, camera assignments, and configuration validation.
-6. **Events and diagnostics:** event history, reconnects, frame drops, errors, and replay controls.
+1. **Board:** implemented single dashboard for board/service status, the three-dart
+   visit, board/network/detection configuration, and one to four camera slots.
+   Camera addition/removal and device, width, height, FPS, and rotation editing
+   share this screen. Scroll on smaller terminals; mouse and keyboard are supported.
+   Future capture diagnostics, lens correction, calibration, and actual detection
+   controls belong here once their backends exist.
+2. **Events:** implemented scrollable diagnostic history of all retained native
+   events (bounded at 64), including sequence, timestamp, session, board, state,
+   revision, scene, occupancy, and visit. Full live payloads remain available from
+   `oche-core events --json` for external recording.
+
+The [detection algorithm proposal](docs/detection-algorithms.md) compares classical
+multi-camera line fitting, adaptive foreground masks, and learned tip detection.
+These algorithms and advanced calibration parameters are not yet implemented.
 
 Use keyboard-selectable lists as the terminal equivalent of dropdowns. Basic control must work over ordinary SSH. For visual calibration, support optional terminal image protocols and an offline frame export/import workflow. Export an annotated image with pixel coordinates, accept reference coordinates through commands or TUI fields, and show a verification overlay. Do not make a browser or image-capable terminal mandatory.
 
