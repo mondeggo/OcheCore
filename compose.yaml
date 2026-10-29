@@ -5,7 +5,7 @@ services:
       context: .
     restart: unless-stopped
     ports:
-      - "${OCHECORE_BIND:-127.0.0.1}:${OCHECORE_PORT:-3180}:3180"
+      - "${OCHECORE_BIND:-127.0.0.1}:${OCHECORE_PORT:-5180}:5180"
     volumes:
       - board-data:/data
     read_only: true

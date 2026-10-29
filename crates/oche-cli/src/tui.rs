@@ -631,7 +631,7 @@ mod tests {
         let mut config = store.initialize().unwrap();
         config.cameras = (1..=4).map(oche_domain::CameraConfig::new).collect();
         let engine =
-            oche_engine::Engine::new(config, store, Mode::ControlOnly, "127.0.0.1:3180".into());
+            oche_engine::Engine::new(config, store, Mode::ControlOnly, "127.0.0.1:5180".into());
         let view = View {
             snapshot: Some(engine.snapshot()),
             ..View::default()
@@ -644,7 +644,7 @@ mod tests {
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
         terminal
-            .draw(|frame| render(frame, &ui, &view, "http://127.0.0.1:3180/api/v1"))
+            .draw(|frame| render(frame, &ui, &view, "http://127.0.0.1:5180/api/v1"))
             .unwrap();
         let text = terminal
             .backend()
@@ -666,7 +666,7 @@ mod tests {
                 ..View::default()
             };
             terminal
-                .draw(|frame| render(frame, &Ui::default(), &view, "http://127.0.0.1:3180/api/v1"))
+                .draw(|frame| render(frame, &Ui::default(), &view, "http://127.0.0.1:5180/api/v1"))
                 .unwrap();
             let text = terminal
                 .backend()

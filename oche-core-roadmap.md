@@ -93,8 +93,8 @@ Mirror the supplied headless CLI where practical. The commands below are propose
 ```bash
 oche-core --help
 oche-core --version
-oche-core --config ./board.toml --port 3180 run
-oche-core --host raspy-darts.local --port 3180 remote
+oche-core --config ./board.toml --port 5180 run
+oche-core --host raspy-darts.local --port 5180 remote
 
 # Non-interactive management
 oche-core status --json

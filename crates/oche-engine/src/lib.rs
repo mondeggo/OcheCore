@@ -260,7 +260,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = storage::Store::acquire(&dir.path().join("board.toml")).unwrap();
         let config = store.initialize().unwrap();
-        let engine = Engine::new(config, store, mode, "127.0.0.1:3180".into());
+        let engine = Engine::new(config, store, mode, "127.0.0.1:5180".into());
         (dir, engine)
     }
 

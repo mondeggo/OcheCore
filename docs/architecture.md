@@ -13,6 +13,10 @@ and compatibility claims; it does not gate the native control foundation.
   Future vision backends feed the engine independently of terminal/network code.
 - **Axum/Tokio:** bounded admission and one command mutex. Persistent file I/O
   runs on blocking workers. Subscriber streams never hold the engine lock.
+- **Native port 5180:** separate from Autodarts' 3180, with a nod to the maximum
+  three-dart score of 180. Selected on 2026-10-29 after checking the
+  [IANA service registry](https://www.iana.org/assignments/service-names-port-numbers/service-names-port-numbers.csv),
+  where 5180 was unassigned. Saved ports and explicit overrides remain supported.
 - **Ratatui/Crossterm:** keyboard navigation, responsive network worker, bounded
   request channel, and terminal restoration. Image support can be added later.
 - **TOML/UUID/atomic files:** schema version 1, board ID generated once, validated

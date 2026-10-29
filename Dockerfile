@@ -33,7 +33,7 @@ COPY --chown=65532:65532 docker/data/ /data/
 USER 65532:65532
 ENV XDG_CONFIG_HOME=/data TERM=xterm-256color PATH=/usr/local/bin
 VOLUME ["/data"]
-EXPOSE 3180
+EXPOSE 5180
 LABEL org.opencontainers.image.title="OcheCore" \
       org.opencontainers.image.description="Offline board control service and terminal UI" \
       org.opencontainers.image.licenses="AGPL-3.0-only"

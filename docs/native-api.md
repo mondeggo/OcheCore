@@ -1,7 +1,7 @@
 # Native API v1
 
 This is OcheCore's native protocol, separate from future Autodarts compatibility.
-Default address: `127.0.0.1:3180`. HTTP authentication and TLS are not implemented;
+Default address: `127.0.0.1:5180`. HTTP authentication and TLS are not implemented;
 expose it only on a trusted network or behind appropriate access controls.
 
 | Method | Path | Behavior |
