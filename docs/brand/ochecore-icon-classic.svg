@@ -21,7 +21,7 @@
   </g>
   <!-- Board geometry from Oche: app/static/img/oche_logo.svg.
        Preserve its twenty segments and ring proportions; adapt red and green. -->
-  <g id="oche-board" transform="translate(123 134) scale(0.1727272727) translate(-721.5 -455)">
+  <g id="oche-board" transform="translate(128 134) scale(0.1727272727) translate(-721.5 -455)">
 <circle cx="721.5" cy="455" r="440" fill="#F0E3CE"/>
 <circle cx="721.5" cy="455" r="425" fill="#090A0A"/>
 <path d="M 661.12,73.75 A 386,386 0 0 1 781.88,73.75 L 777.82,99.43 A 360,360 0 0 0 665.18,99.43 Z" fill="#8f2837"/>
@@ -109,7 +109,7 @@
 <circle cx="721.5" cy="455" r="437" fill="none" stroke="#F7EAD3" stroke-width="6"/>
   </g>
   <!-- Point at the bull; barrel, shaft, and flights extend toward the upper right. -->
-  <g id="dart" transform="translate(123 134) rotate(-45)">
+  <g id="dart" transform="translate(128 134) rotate(-45)">
     <!-- Cream separation and dark edging keep the body readable over every segment. -->
     <path d="M25 0L33-5H66L73-2H88L101-22H130L120 0L130 20H101L88 2H73L66 5H33Z"
           fill="#f5edd9" stroke="#f5edd9" stroke-width="4" stroke-linejoin="round"/>

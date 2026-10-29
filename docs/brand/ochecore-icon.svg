@@ -23,7 +23,7 @@
     <path d="M51 95H37v66h14"/>
     <path d="M205 95h14v66h-14"/>
   </g>
-  <g transform="translate(123 134)">
+  <g transform="translate(128 134)">
     <circle r="62" fill="#102f3a" stroke="url(#ring)" stroke-width="5"/>
     <g stroke="#285461" stroke-width="2">
       <path d="M0-59V59M-59 0H59M-42-42l84 84M-42 42l84-84"/>
@@ -32,7 +32,7 @@
     <circle r="19" fill="#123d46" stroke="#67e8f9" stroke-width="3"/>
     <circle r="7" fill="#5eead4"/>
   </g>
-  <g id="dart" transform="translate(123 134) rotate(-45)">
+  <g id="dart" transform="translate(128 134) rotate(-45)">
     <path d="M25 0L33-5H66L73-2H88L101-22H130L120 0L130 20H101L88 2H73L66 5H33Z"
           fill="#0b1422" stroke="#0b1422" stroke-width="4" stroke-linejoin="round"/>
     <path d="M0 0L28-0.9V0.9Z" fill="#f1f5f9" stroke="#0b1422" stroke-width="0.35"/>
