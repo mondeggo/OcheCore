@@ -404,7 +404,7 @@ mod tests {
         let mut points = anchors();
         // Deterministic ±0.7 px pseudo-noise.
         for (i, p) in points.iter_mut().enumerate() {
-            p.image.x += if i % 2 == 0 { 0.7 } else { -0.7 };
+            p.image.x += if i.is_multiple_of(2) { 0.7 } else { -0.7 };
             p.image.y += if i % 3 == 0 { -0.7 } else { 0.7 };
         }
         let fit = Homography::fit(&points).unwrap();

@@ -435,9 +435,11 @@ mod tests {
                 let colour = match (hit.ring, index) {
                     (Ring::InnerBull, _) => [200, 20, 40],
                     (Ring::OuterBull, _) => [10, 150, 110],
-                    (Ring::Treble | Ring::Double, Some(i)) if i % 2 == 0 => [200, 20, 40],
+                    (Ring::Treble | Ring::Double, Some(i)) if i.is_multiple_of(2) => [200, 20, 40],
                     (Ring::Treble | Ring::Double, Some(_)) => [10, 150, 110],
-                    (Ring::InnerSingle | Ring::OuterSingle, Some(i)) if i % 2 == 0 => [20, 20, 25],
+                    (Ring::InnerSingle | Ring::OuterSingle, Some(i)) if i.is_multiple_of(2) => {
+                        [20, 20, 25]
+                    }
                     (Ring::InnerSingle | Ring::OuterSingle, Some(_)) => [185, 190, 190],
                     _ => [30, 30, 30],
                 };

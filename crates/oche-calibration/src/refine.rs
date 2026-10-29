@@ -115,7 +115,7 @@ fn radial_degrees(k: usize) -> f64 {
 /// Whether the single segment at `degrees` is black (20 and every other one).
 fn black_single(degrees: f64) -> bool {
     let index = ((degrees + 9.0).rem_euclid(360.0) / 18.0) as usize % 20;
-    index % 2 == 0
+    index.is_multiple_of(2)
 }
 
 fn near_radial(degrees: f64, clearance: f64) -> bool {
@@ -599,7 +599,10 @@ mod tests {
         }
     }
 
-    fn mapping(points: &[((f64, f64), (f64, f64))]) -> Homography {
+    /// Image pixel and the board point it shows.
+    type Pair = ((f64, f64), (f64, f64));
+
+    fn mapping(points: &[Pair]) -> Homography {
         let correspondences: Vec<_> = points
             .iter()
             .map(|&((ix, iy), (bx, by))| Correspondence {
