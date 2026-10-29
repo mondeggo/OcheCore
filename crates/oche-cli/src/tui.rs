@@ -1,14 +1,17 @@
 use crate::client::Client;
 use anyhow::Result;
-use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode, KeyEvent, KeyEventKind,
+    KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use futures_util::StreamExt;
 use oche_domain::{Command, ConfigChange, Mode, NativeEvent, Snapshot, Speed};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph, Tabs, Wrap},
+    text::Line,
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 use std::time::Duration;
 use tokio::sync::{mpsc, watch};
@@ -53,9 +56,24 @@ struct Ui {
     notice: String,
 }
 
+#[derive(Clone, Copy)]
+enum MouseAction {
+    Tab(usize),
+    Key(KeyCode),
+    Camera(usize),
+    CameraField(usize),
+    Config(usize),
+}
+
+struct Hit {
+    area: Rect,
+    action: MouseAction,
+}
+
 struct Restore;
 impl Drop for Restore {
     fn drop(&mut self) {
+        let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);
         ratatui::restore();
     }
 }
@@ -69,6 +87,7 @@ impl Drop for AbortTask {
 pub async fn run(client: Client) -> Result<()> {
     let mut terminal = ratatui::try_init()?;
     let _restore = Restore;
+    crossterm::execute!(std::io::stdout(), EnableMouseCapture)?;
     let (request_tx, request_rx) = mpsc::channel(8);
     let (view_tx, mut view_rx) = watch::channel(View::default());
     let endpoint = client.endpoint.clone();
@@ -79,7 +98,8 @@ pub async fn run(client: Client) -> Result<()> {
     let shutdown = crate::shutdown();
     tokio::pin!(shutdown);
     loop {
-        terminal.draw(|frame| render(frame, &ui, &view, &endpoint))?;
+        let mut hits = Vec::new();
+        terminal.draw(|frame| hits = render(frame, &ui, &view, &endpoint))?;
         tokio::select! {
             _ = &mut shutdown => break,
             result = view_rx.changed() => {
@@ -92,6 +112,9 @@ pub async fn run(client: Client) -> Result<()> {
                     if ui.editor.is_none() && key.code == KeyCode::Char('q') { break; }
                     handle_key(&mut ui, &view, key, &request_tx);
                 }
+                Some(Ok(Event::Mouse(mouse))) => {
+                    if handle_mouse(&mut ui, &view, mouse, &hits, &request_tx) { break; }
+                }
                 Some(Err(error)) => return Err(error.into()),
                 None => break,
                 _ => {}
@@ -99,6 +122,51 @@ pub async fn run(client: Client) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn handle_mouse(
+    ui: &mut Ui,
+    view: &View,
+    mouse: MouseEvent,
+    hits: &[Hit],
+    tx: &mpsc::Sender<Request>,
+) -> bool {
+    let position = (mouse.column, mouse.row).into();
+    let action = hits.iter().find(|hit| hit.area.contains(position));
+    let key = match mouse.kind {
+        MouseEventKind::Down(MouseButton::Left) => match action.map(|hit| hit.action) {
+            Some(MouseAction::Tab(tab)) => Some(KeyCode::Char(char::from(b'1' + tab as u8))),
+            Some(MouseAction::Key(KeyCode::Char('q'))) => return true,
+            Some(MouseAction::Key(key)) => Some(key),
+            Some(MouseAction::Camera(index)) => {
+                ui.selected = index;
+                None
+            }
+            Some(MouseAction::CameraField(index)) => {
+                ui.camera_field = index;
+                Some(KeyCode::Enter)
+            }
+            Some(MouseAction::Config(index)) => {
+                ui.selected = index;
+                Some(KeyCode::Enter)
+            }
+            None => None,
+        },
+        MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+            if action.is_some() && (ui.editor.is_some() || matches!(ui.tab, 1 | 2)) =>
+        {
+            Some(if mouse.kind == MouseEventKind::ScrollUp {
+                KeyCode::Up
+            } else {
+                KeyCode::Down
+            })
+        }
+        _ => None,
+    };
+    if let Some(key) = key {
+        handle_key(ui, view, KeyEvent::new(key, KeyModifiers::NONE), tx);
+    }
+    false
 }
 
 async fn network(
@@ -158,6 +226,10 @@ fn handle_key(ui: &mut Ui, view: &View, key: KeyEvent, tx: &mpsc::Sender<Request
         match key.code {
             KeyCode::Esc => ui.editor = None,
             KeyCode::Enter => {
+                if view.snapshot.is_none() || view.error.is_some() {
+                    ui.notice = "Disconnected; reconnect before saving".into();
+                    return;
+                }
                 let editor = ui.editor.take().unwrap();
                 send(
                     ui,
@@ -324,7 +396,8 @@ fn plain(text: &str) -> String {
         .collect()
 }
 
-fn render(frame: &mut Frame, ui: &Ui, view: &View, endpoint: &str) {
+fn render(frame: &mut Frame, ui: &Ui, view: &View, endpoint: &str) -> Vec<Hit> {
+    let mut hits = Vec::new();
     let area = frame.area();
     if area.width < 60 || area.height < 20 {
         frame.render_widget(
@@ -332,7 +405,7 @@ fn render(frame: &mut Frame, ui: &Ui, view: &View, endpoint: &str) {
                 .wrap(Wrap { trim: false }),
             area,
         );
-        return;
+        return hits;
     }
     let sections = Layout::vertical([
         Constraint::Length(3),
@@ -360,17 +433,28 @@ fn render(frame: &mut Frame, ui: &Ui, view: &View, endpoint: &str) {
         .block(Block::default().borders(Borders::ALL)),
         sections[0],
     );
-    frame.render_widget(
-        Tabs::new(TABS)
-            .select(ui.tab)
-            .highlight_style(
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .block(Block::default().borders(Borders::ALL)),
-        sections[1],
-    );
+    let tab_block = Block::default().borders(Borders::ALL);
+    let tabs = tab_block.inner(sections[1]);
+    frame.render_widget(tab_block, sections[1]);
+    let mut x = tabs.x;
+    for (index, label) in TABS.iter().enumerate() {
+        let rect = Rect::new(
+            x,
+            tabs.y,
+            (label.len() as u16 + 2).min(tabs.right().saturating_sub(x)),
+            1,
+        );
+        button(
+            frame,
+            &mut hits,
+            rect,
+            label,
+            MouseAction::Tab(index),
+            true,
+            ui.tab == index,
+        );
+        x = rect.right().saturating_add(1);
+    }
     let mut lines: Vec<Line> = Vec::new();
     if let Some(error) = &view.error {
         lines.push(Line::styled(
@@ -546,19 +630,80 @@ fn render(frame: &mut Frame, ui: &Ui, view: &View, endpoint: &str) {
         body = body.wrap(Wrap { trim: false });
     }
     frame.render_widget(body, sections[2]);
+    let content = Block::default().borders(Borders::ALL).inner(sections[2]);
+    if connected && ui.tab == 1 {
+        let snapshot = view.snapshot.as_ref().unwrap();
+        let visible = (sections[2].height.saturating_sub(6) / 3).max(1) as usize;
+        let first = ui.selected.saturating_sub(visible - 1);
+        for (row, index) in (first..snapshot.config.cameras.len())
+            .take(visible)
+            .enumerate()
+        {
+            let y = content.y + 4 + row as u16 * 3;
+            let height = 3.min(content.bottom().saturating_sub(y));
+            if height > 0 {
+                hits.push(Hit {
+                    area: Rect::new(content.x, y, content.width, height),
+                    action: MouseAction::Camera(index),
+                });
+            }
+        }
+        let mut x = content.x;
+        for (index, field) in CAMERA_FIELDS.iter().enumerate() {
+            let rect = Rect::new(x, content.y + 2, field.len() as u16 + 2, 1);
+            button(
+                frame,
+                &mut hits,
+                rect,
+                field,
+                MouseAction::CameraField(index),
+                true,
+                ui.camera_field == index,
+            );
+            x = rect.right() + 1;
+        }
+    } else if connected && ui.tab == 2 {
+        for index in 0..CONFIG_FIELDS.len() {
+            let y = content.y + 2 + index as u16;
+            if y < content.bottom() {
+                hits.push(Hit {
+                    area: Rect::new(content.x, y, content.width, 1),
+                    action: MouseAction::Config(index),
+                });
+            }
+        }
+    }
     frame.render_widget(
         Paragraph::new(vec![
-            Line::from(vec![
-                Span::styled("Tab / 1–5", Style::default().fg(Color::Cyan)),
-                Span::raw(" screens · s start · x stop · r reset · w wake · q quit"),
-            ]),
+            Line::raw(""),
             Line::raw(plain(&view.feedback)),
             Line::raw(plain(&ui.notice)),
         ])
         .block(Block::default().borders(Borders::TOP)),
         sections[3],
     );
+    let mut x = sections[3].x + 1;
+    for (label, key) in [
+        ("s Start", 's'),
+        ("x Stop", 'x'),
+        ("r Reset", 'r'),
+        ("w Wake", 'w'),
+        ("q Quit", 'q'),
+    ] {
+        let rect = Rect::new(x, sections[3].y + 1, label.len() as u16 + 2, 1);
+        button(
+            frame,
+            &mut hits,
+            rect,
+            label,
+            MouseAction::Key(KeyCode::Char(key)),
+            connected || key == 'q',
+            false,
+        );
+        x = rect.right() + 1;
+    }
     if let Some(editor) = &ui.editor {
+        hits.clear();
         let width = area.width.saturating_sub(4).min(80);
         let popup = Rect::new(
             (area.width - width) / 2,
@@ -576,9 +721,9 @@ fn render(frame: &mut Frame, ui: &Ui, view: &View, endpoint: &str) {
                     Style::default().fg(Color::Cyan),
                 ),
                 Line::raw(if editor.choices.is_empty() {
-                    "Type / Backspace · Ctrl-U clear · Enter save · Esc cancel"
+                    "Type / Backspace · Ctrl-U clear"
                 } else {
-                    "←/→ choose · Enter save · Esc cancel"
+                    "←/→ or mouse wheel to choose"
                 }),
             ])
             .wrap(Wrap { trim: false })
@@ -589,6 +734,65 @@ fn render(frame: &mut Frame, ui: &Ui, view: &View, endpoint: &str) {
             ),
             popup,
         );
+        let mut x = popup.x + 2;
+        let controls: &[(&str, KeyCode)] = if editor.choices.is_empty() {
+            &[("Save", KeyCode::Enter), ("Cancel", KeyCode::Esc)]
+        } else {
+            &[
+                ("< Prev", KeyCode::Left),
+                ("Next >", KeyCode::Right),
+                ("Save", KeyCode::Enter),
+                ("Cancel", KeyCode::Esc),
+            ]
+        };
+        for (label, key) in controls {
+            let rect = Rect::new(x, popup.y + 5, label.len() as u16 + 2, 1);
+            button(
+                frame,
+                &mut hits,
+                rect,
+                label,
+                MouseAction::Key(*key),
+                connected || *key != KeyCode::Enter,
+                false,
+            );
+            x = rect.right() + 1;
+        }
+        // Let the wheel change choices anywhere inside the modal, without
+        // allowing clicks on its empty space to reach the screen behind it.
+        hits.push(Hit {
+            area: popup,
+            action: MouseAction::Key(KeyCode::Null),
+        });
+    }
+    hits
+}
+
+fn button(
+    frame: &mut Frame,
+    hits: &mut Vec<Hit>,
+    area: Rect,
+    label: &str,
+    action: MouseAction,
+    enabled: bool,
+    selected: bool,
+) {
+    if area.is_empty() {
+        return;
+    }
+    let style = if !enabled {
+        Style::default().fg(Color::DarkGray)
+    } else if selected {
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::Cyan).bg(Color::DarkGray)
+    };
+    frame.render_widget(Paragraph::new(format!(" {label} ")).style(style), area);
+    if enabled {
+        hits.push(Hit { area, action });
     }
 }
 
@@ -604,13 +808,16 @@ fn selection(selected: bool) -> Style {
 
 fn help(lines: &mut Vec<Line>) {
     for line in [
-        "Keyboard",
+        "Keyboard and mouse",
         "Tab / Shift-Tab or 1–5: change screen",
         "s: start    x: stop    r: reset visit    w: wake    q: quit",
         "↑/↓: select a configuration field or camera",
         "←/→: select a camera field; choose options inside an editor",
         "Enter: edit/save    Esc: cancel    Ctrl-U: clear text",
         "Demo mode only: t adds T20; o completes takeout",
+        "Click tabs or Start / Stop / Reset / Wake / Quit.",
+        "Click a setting to edit; click a camera, then its field.",
+        "Wheel over rows to select; click Save / Cancel in editors.",
         "",
         "The daemon keeps running when this UI closes.",
         "Reset clears the logical visit, not physical darts.",
@@ -623,6 +830,158 @@ fn help(lines: &mut Vec<Line>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn mouse_at(column: u16, row: u16, kind: MouseEventKind) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    fn draw_hits(ui: &Ui, view: &View, width: u16, height: u16) -> Vec<Hit> {
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        let mut hits = Vec::new();
+        terminal
+            .draw(|frame| hits = render(frame, ui, view, "http://127.0.0.1:5180/api/v1"))
+            .unwrap();
+        hits
+    }
+
+    #[test]
+    fn mouse_editing_preserves_revision_and_blocks_background_commands() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = oche_engine::storage::Store::acquire(&dir.path().join("board.toml")).unwrap();
+        let config = store.initialize().unwrap();
+        let engine =
+            oche_engine::Engine::new(config, store, Mode::ControlOnly, "127.0.0.1:5180".into());
+        let mut view = View {
+            snapshot: Some(engine.snapshot()),
+            ..View::default()
+        };
+        let mut ui = Ui::default();
+        let (tx, mut rx) = mpsc::channel(8);
+        let click = |ui: &mut Ui, view: &View, x, y| {
+            let hits = draw_hits(ui, view, 110, 30);
+            handle_mouse(
+                ui,
+                view,
+                mouse_at(x, y, MouseEventKind::Down(MouseButton::Left)),
+                &hits,
+                &tx,
+            )
+        };
+        click(&mut ui, &view, 24, 4); // Configuration tab.
+        assert_eq!(ui.tab, 2);
+        click(&mut ui, &view, 4, 9); // Board name row.
+        let editor = ui.editor.as_mut().unwrap();
+        assert_eq!(editor.key, "board.name");
+        editor.value = "Mouse edit".into();
+        let revision = editor.revision;
+        click(&mut ui, &view, 3, 27); // Start behind the modal must not run.
+        assert!(rx.try_recv().is_err());
+        assert!(ui.editor.is_some());
+
+        view.error = Some("Disconnected".into());
+        click(&mut ui, &view, 19, 16); // Saving stale/offline data is disabled.
+        handle_key(
+            &mut ui,
+            &view,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &tx,
+        );
+        assert!(rx.try_recv().is_err());
+        assert!(ui.editor.is_some());
+        view.error = None;
+        click(&mut ui, &view, 19, 16);
+        let Request::Configure(change) = rx.try_recv().unwrap() else {
+            panic!("expected configuration edit")
+        };
+        assert_eq!(change.key, "board.name");
+        assert_eq!(change.value, "Mouse edit");
+        assert_eq!(change.expected_revision, Some(revision));
+        assert!(ui.editor.is_none());
+
+        view.error = Some("Disconnected".into());
+        click(&mut ui, &view, 3, 27);
+        assert!(rx.try_recv().is_err());
+        assert!(draw_hits(&ui, &view, 40, 12).is_empty());
+        assert!(!handle_mouse(
+            &mut ui,
+            &view,
+            mouse_at(3, 27, MouseEventKind::Down(MouseButton::Left)),
+            &[],
+            &tx
+        ));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn mouse_selects_visible_camera_and_edits_its_field() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = oche_engine::storage::Store::acquire(&dir.path().join("board.toml")).unwrap();
+        let mut config = store.initialize().unwrap();
+        config.cameras = (1..=4).map(oche_domain::CameraConfig::new).collect();
+        let engine =
+            oche_engine::Engine::new(config, store, Mode::ControlOnly, "127.0.0.1:5180".into());
+        let view = View {
+            snapshot: Some(engine.snapshot()),
+            ..View::default()
+        };
+        let mut ui = Ui {
+            tab: 1,
+            selected: 3,
+            ..Ui::default()
+        };
+        let (tx, mut rx) = mpsc::channel(8);
+        let hits = draw_hits(&ui, &view, 80, 24);
+        // With only two visible cameras, this row is camera 3, not camera 1.
+        handle_mouse(
+            &mut ui,
+            &view,
+            mouse_at(5, 11, MouseEventKind::Down(MouseButton::Left)),
+            &hits,
+            &tx,
+        );
+        assert_eq!(ui.selected, 2);
+        let hits = draw_hits(&ui, &view, 80, 24);
+        handle_mouse(
+            &mut ui,
+            &view,
+            mouse_at(5, 11, MouseEventKind::ScrollDown),
+            &hits,
+            &tx,
+        );
+        assert_eq!(ui.selected, 3);
+        let hits = draw_hits(&ui, &view, 80, 24);
+        handle_mouse(
+            &mut ui,
+            &view,
+            mouse_at(34, 9, MouseEventKind::Down(MouseButton::Left)),
+            &hits,
+            &tx,
+        );
+        assert_eq!(ui.editor.as_ref().unwrap().key, "cameras.4.rotation");
+        let hits = draw_hits(&ui, &view, 80, 24);
+        handle_mouse(
+            &mut ui,
+            &view,
+            mouse_at(14, 11, MouseEventKind::ScrollDown),
+            &hits,
+            &tx,
+        );
+        assert_eq!(ui.editor.as_ref().unwrap().value, "90");
+        handle_key(
+            &mut ui,
+            &view,
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            &tx,
+        );
+        assert!(ui.editor.is_none());
+        assert!(rx.try_recv().is_err());
+    }
 
     #[test]
     fn selected_fourth_camera_remains_visible_in_an_ordinary_ssh_terminal() {
@@ -644,7 +1003,9 @@ mod tests {
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
         terminal
-            .draw(|frame| render(frame, &ui, &view, "http://127.0.0.1:5180/api/v1"))
+            .draw(|frame| {
+                render(frame, &ui, &view, "http://127.0.0.1:5180/api/v1");
+            })
             .unwrap();
         let text = terminal
             .backend()
@@ -666,7 +1027,9 @@ mod tests {
                 ..View::default()
             };
             terminal
-                .draw(|frame| render(frame, &Ui::default(), &view, "http://127.0.0.1:5180/api/v1"))
+                .draw(|frame| {
+                    render(frame, &Ui::default(), &view, "http://127.0.0.1:5180/api/v1");
+                })
                 .unwrap();
             let text = terminal
                 .backend()

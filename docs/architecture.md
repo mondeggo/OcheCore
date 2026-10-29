@@ -18,7 +18,10 @@ and compatibility claims; it does not gate the native control foundation.
   [IANA service registry](https://www.iana.org/assignments/service-names-port-numbers/service-names-port-numbers.csv),
   where 5180 was unassigned. Saved ports and explicit overrides remain supported.
 - **Ratatui/Crossterm:** keyboard navigation, responsive network worker, bounded
-  request channel, and terminal restoration. Image support can be added later.
+  request channel, and terminal restoration. Mouse capture routes clicks through
+  the same commands and configuration editor as the keyboard. Click targets are
+  rebuilt from each rendered layout; modal editors block background clicks and
+  disconnected controls cannot submit changes. Image support can be added later.
 - **TOML/UUID/atomic files:** schema version 1, board ID generated once, validated
   atomic replacement with file/directory sync, and a separate lifetime lock file.
   Native UUIDs do not predetermine a future compatibility adapter's representation.
@@ -37,3 +40,20 @@ Standby changes the control lifecycle only; speed presets have no processing
 effect until capture/vision exists. No Autodarts adapter is advertised before
 observed contracts and unchanged-client tests exist. These limits are visible
 in both the UI and API.
+
+## Oche terminal integration reference
+
+Inspection of Oche's published `main` branch on 2026-10-29 shows that its
+[service wrapper](https://github.com/mondeggo/oche/blob/8706ad2e0c42f5877a21f170a5b548941477ee70/app/services/autodarts.py)
+starts `autodarts run`. Its process manager stops that subprocess using SIGTERM,
+with a forced kill after a timeout. Its
+[terminal wrapper](https://github.com/mondeggo/oche/blob/8706ad2e0c42f5877a21f170a5b548941477ee70/app/services/autodarts_terminal.py)
+launches `autodarts remote -H 127.0.0.1` in a separate PTY. The browser's
+xterm.js terminal forwards input through a WebSocket, including mouse reports
+when the TUI enables them.
+
+OcheCore follows the same daemon/client separation with `oche-core run` and
+`oche-core remote -H 127.0.0.1 --port 5180`. Its TUI Start/Stop commands change
+board activity inside the running daemon; a supervisor controls the process
+itself. This documents the integration pattern; Oche's Autodarts-specific routes
+have not been changed to launch OcheCore.

@@ -109,6 +109,13 @@ JSON goes to stdout; errors/diagnostics go to stderr. Exit codes: `0` success,
 Screens: **Overview**, **Cameras**, **Configuration**, **Events**, **Help**.
 Works over SSH without terminal image support.
 
+Mouse support works in terminals that forward mouse events, including xterm.js:
+click tabs and the Start / Stop / Reset / Wake / Quit controls, click a setting
+to edit it, or select a camera and click its field. Scroll over camera/settings
+rows to change selection. Editors provide Previous / Next choices and Save /
+Cancel buttons. Text values still use the keyboard. Mouse capture is released
+when the UI closes; keyboard controls remain available.
+
 | Key | Action |
 | --- | --- |
 | Tab / Shift-Tab, or 1–5 | Switch screen |
@@ -119,6 +126,10 @@ Works over SSH without terminal image support.
 | Ctrl-U | Clear text while editing |
 | t / o | Synthetic T20 / full takeout, demo mode only |
 | q / Ctrl-C | Close UI |
+
+The daemon is launched with `oche-core run`; the TUI is opened separately with
+`oche-core remote`. Start/Stop inside the TUI controls board activity, while
+closing the TUI leaves the daemon running.
 
 Edits check the state revision to detect concurrent changes. Keyboard input stays
 responsive during network failures. Stale data is labeled disconnected and

@@ -105,9 +105,32 @@ def main():
                     eventually(connected)
                     os.write(master, b"3\r\x15Smoke room\r")
                     eventually(lambda: cli("status")["config"]["board"]["name"] == "Smoke room")
-                    os.write(master, b"q")
+
+                    # SGR mouse input, as emitted by xterm.js and native terminals.
+                    def click(column, row):
+                        os.write(master, f"\x1b[<0;{column};{row}M\x1b[<0;{column};{row}m".encode())
+
+                    assert b"\x1b[?1006h" in rendered, "mouse reporting was not enabled"
+                    click(14, 28)  # Stop in the footer.
+                    eventually(lambda: cli("status")["state"] == "stopped")
+                    click(4, 28)  # Start in the footer.
+                    eventually(lambda: cli("status")["state"] == "running")
+                    click(3, 5)   # Overview tab.
+                    click(25, 5)  # Configuration tab.
+                    click(5, 10)  # Board name row.
+                    os.write(master, b"\x15Mouse room")
+                    click(20, 17)  # Save in the editor.
+                    eventually(lambda: cli("status")["config"]["board"]["name"] == "Mouse room")
+                    click(5, 11)  # Speed row.
+                    click(28, 17)  # Next choice.
+                    click(38, 17)  # Save choice.
+                    eventually(lambda: cli("status")["config"]["detection"]["speed"] == "high")
+                    click(44, 28)  # Quit in the footer.
                     assert ui.wait(timeout=5) == 0
                     assert termios.tcgetattr(slave) == before, "terminal state not restored"
+                    while select.select([master], [], [], 0.1)[0]:
+                        rendered.extend(os.read(master, 65536))
+                    assert b"\x1b[?1006l" in rendered, "mouse reporting was not disabled"
                 finally:
                     if ui.poll() is None:
                         ui.kill()
@@ -123,12 +146,12 @@ def main():
                 stream.close()
                 daemon = start(False)
                 restarted = cli("status")
-                assert restarted["config"]["board"]["name"] == "Smoke room"
+                assert restarted["config"]["board"]["name"] == "Mouse room"
                 assert restarted["config"]["board"]["id"] == initial["config"]["board"]["id"]
                 assert restarted["session_id"] != initial["session_id"]
                 assert restarted["physical_darts"] is None
                 assert "disabled" in cli("demo", "throw", "T20", ok=False)["error"]
-                print("PASS: CLI, TUI editing/restoration, native events, identity persistence, demo isolation, port/ownership conflicts, and streaming shutdown")
+                print("PASS: CLI, TUI keyboard/mouse editing and restoration, native events, identity persistence, demo isolation, port/ownership conflicts, and streaming shutdown")
             except BaseException:
                 log.flush()
                 log.seek(0)
