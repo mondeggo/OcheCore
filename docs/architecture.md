@@ -102,6 +102,14 @@ and compatibility claims; it does not gate the native control foundation.
   plus `v4l2-ctl --verbose` logs) and provides `info`, `frame`, `probe`, and
   `calibrate` commands. Overlays are written as uncompressed PNG by a small
   in-crate encoder. Development use only; not packaged in releases.
+- **Exploratory dart analysis (`oche-replay darts`):** offline only. Motion at
+  10 Hz on 4x-downsampled luma finds still periods common to all cameras; five
+  averaged frames represent each period. Consecutive periods are differenced,
+  pieces within 4 px are grouped, and the largest group's principal axis (flight
+  included) becomes a board line. Arrival versus removal compares each change
+  with the first, empty, still period. All thresholds are exploratory defaults
+  in `darts::Settings`, not validated values. Live processing, partial-takeout
+  logic, and robust shaft fitting are not implemented.
 
 Standby changes the control lifecycle only; speed presets have no processing
 effect until capture/vision exists. No Autodarts adapter is advertised before

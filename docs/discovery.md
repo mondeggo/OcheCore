@@ -159,7 +159,28 @@ WDF nominal values or colour erosion differs between the rings. Measuring the
 board will separate the two. These are fit statistics against detected anchors,
 not independent physical holdout points or scoring accuracy.
 
+First exploratory dart analysis (2026-10-29, `oche-replay darts` on
+`visit1-labelled` with the calibration above). Still periods common to all
+cameras separate arrivals; each arrival's change mask is grouped, its principal
+axis mapped to a board line, and lines fused (sigma 2 mm, minimum angle 10°,
+residual limit 3 sigma):
+
+| Visit | Thrower's labels | Fused result (cameras used) |
+| --- | --- | --- |
+| 1 | T1, 11, 20 | T1 (3), S11 (2), S20 (3) |
+| 2 | 18, 20, T1 | S18 (3), S20 (3), T1 (2) |
+| 3 | miss, 8, miss picked up, 5 | MISS 186 mm below centre (2), S8 (3), abstained ill-conditioned then reversed by pickup, S5 (3) |
+| 4 | 13, miss picked up, 25, 1 | S13 (3), no change seen, SB (2), S1 (3) |
+
+All 12 fused results agree with the labels; the bounce-out abstained. Where
+three cameras were fused, lines agreed within 0.1–1.9 mm. This is not an
+accuracy result: the session is small, it was used while developing the method
+(grouping of mask pieces was added after inspecting its failures), labels for
+singles do not record the ring, and no impact lies near a wire. Earlier
+cameras-off-axis failures in the 20/5 area came from fitting only the flight.
+
 - [ ] Measure the installed board's double and treble wire diameters.
+- [ ] Record held-out labelled sessions, including wire-adjacent and grouped darts.
 - [ ] Record empty board, single throws, three-dart visits, grouped darts,
   wire-adjacent impacts, hands, early/partial/full takeout, and lighting changes.
 - [ ] Include bounced/falling darts, vibrating shafts, and occlusion where possible.

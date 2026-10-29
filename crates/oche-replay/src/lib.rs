@@ -5,6 +5,7 @@
 //! `seq:`/`bytesused:`/`ts:` line per frame). This is the provisional format of
 //! the recordings made during discovery, not a stable interchange format.
 
+pub mod darts;
 pub mod png;
 
 use std::fs;

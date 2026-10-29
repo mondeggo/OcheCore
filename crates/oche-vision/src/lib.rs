@@ -12,6 +12,7 @@
 //! feature quality.
 
 pub mod image;
+pub mod mask;
 
 use oche_domain::board::{BoardLine, BoardPoint};
 use serde::{Deserialize, Serialize};

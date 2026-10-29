@@ -21,13 +21,14 @@ use std::f64::consts::TAU;
 
 use oche_domain::board::{BoardDimensions, BoardPoint, SEGMENTS};
 use oche_vision::image::RgbImage;
+use oche_vision::mask::{Region, dilate, label};
 
 use crate::{Correspondence, Fit, FitError, Homography, Pixel, Residuals};
 
 const RAYS: usize = 1440;
 const RAY_STEP: f64 = 0.5;
 /// Dilation radius that bridges radial wires between coloured segments.
-const BRIDGE: i64 = 2;
+const BRIDGE: usize = 2;
 /// Rays in a colour run shorter than this are treated as noise.
 const MIN_ARC_RAYS: usize = 4;
 const ITERATIONS: usize = 4;
@@ -40,7 +41,8 @@ enum Colour {
 
 fn classify([r, g, b]: [u8; 3]) -> Option<Colour> {
     let (r, g, b) = (i32::from(r), i32::from(g), i32::from(b));
-    if r >= 90 && r - g.max(b) >= 60 {
+    // The ratio test keeps tinted whites such as (246, 175, 183) out of red.
+    if r >= 90 && r - g.max(b) >= 60 && 2 * g.max(b) <= r {
         Some(Colour::Red)
     } else if g >= 70 && g - r >= 50 && g >= b {
         Some(Colour::Green)
@@ -146,97 +148,18 @@ pub fn detect(
 struct Components {
     width: usize,
     labels: Vec<u32>,
-    stats: Vec<Stats>,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct Stats {
-    count: usize,
-    min: (usize, usize),
-    max: (usize, usize),
-    sum: (f64, f64),
-}
-
-impl Stats {
-    fn bbox_area(&self) -> usize {
-        (self.max.0 - self.min.0 + 1) * (self.max.1 - self.min.1 + 1)
-    }
-
-    fn inside(&self, outer: &Stats) -> bool {
-        self.min.0 > outer.min.0
-            && self.min.1 > outer.min.1
-            && self.max.0 < outer.max.0
-            && self.max.1 < outer.max.1
-    }
-
-    fn centroid(&self) -> Pixel {
-        Pixel::new(
-            self.sum.0 / self.count as f64,
-            self.sum.1 / self.count as f64,
-        )
-    }
+    regions: Vec<Region>,
 }
 
 impl Components {
-    /// Labels 4-connected regions of the dilated colour mask. Label 0 is empty.
+    /// Labels the colour mask after dilation bridges the radial wires.
     fn label(width: usize, height: usize, colours: &[Option<Colour>]) -> Self {
-        let mut mask = vec![false; colours.len()];
-        for y in 0..height as i64 {
-            for x in 0..width as i64 {
-                if colours[y as usize * width + x as usize].is_none() {
-                    continue;
-                }
-                for dy in -BRIDGE..=BRIDGE {
-                    for dx in -BRIDGE..=BRIDGE {
-                        let (nx, ny) = (x + dx, y + dy);
-                        if nx >= 0 && ny >= 0 && (nx as usize) < width && (ny as usize) < height {
-                            mask[ny as usize * width + nx as usize] = true;
-                        }
-                    }
-                }
-            }
-        }
-        let mut labels = vec![0u32; colours.len()];
-        let mut stats = Vec::new();
-        let mut stack = Vec::new();
-        for start in 0..mask.len() {
-            if !mask[start] || labels[start] != 0 {
-                continue;
-            }
-            let label = stats.len() as u32 + 1;
-            let mut s = Stats {
-                count: 0,
-                min: (usize::MAX, usize::MAX),
-                max: (0, 0),
-                sum: (0.0, 0.0),
-            };
-            labels[start] = label;
-            stack.push(start);
-            while let Some(i) = stack.pop() {
-                let (x, y) = (i % width, i / width);
-                s.count += 1;
-                s.min = (s.min.0.min(x), s.min.1.min(y));
-                s.max = (s.max.0.max(x), s.max.1.max(y));
-                s.sum = (s.sum.0 + x as f64, s.sum.1 + y as f64);
-                let neighbours = [
-                    (x > 0).then(|| i - 1),
-                    (x + 1 < width).then(|| i + 1),
-                    (y > 0).then(|| i - width),
-                    (y + 1 < height).then(|| i + width),
-                ];
-                for n in neighbours.into_iter().flatten() {
-                    if mask[n] && labels[n] == 0 {
-                        labels[n] = label;
-                        stack.push(n);
-                    }
-                }
-            }
-            stats.push(s);
-        }
+        let coloured: Vec<bool> = colours.iter().map(Option::is_some).collect();
+        let (labels, regions) = label(&dilate(&coloured, width, height, BRIDGE), width);
         Self {
             width,
             labels,
-            stats,
+            regions,
         }
     }
 
@@ -246,33 +169,30 @@ impl Components {
 
     /// Double ring, treble ring, and the bull centroid.
     fn rings(&self) -> Result<(u32, u32, Pixel), DetectError> {
-        let index = |i: usize| i as u32 + 1;
-        let (double_i, double) = self
-            .stats
+        let double = self
+            .regions
             .iter()
-            .enumerate()
-            .max_by_key(|(_, s)| s.bbox_area())
+            .max_by_key(|r| r.bbox_area())
             .ok_or(DetectError::RingsNotFound("double ring"))?;
-        let (treble_i, treble) = self
-            .stats
+        let treble = self
+            .regions
             .iter()
-            .enumerate()
-            .filter(|(i, s)| *i != double_i && s.inside(double))
-            .max_by_key(|(_, s)| s.count)
+            .filter(|r| r.label != double.label && r.inside(double))
+            .max_by_key(|r| r.count)
             .ok_or(DetectError::RingsNotFound("treble ring"))?;
         let target = treble.centroid();
-        let (_, bull) = self
-            .stats
+        let distance = |r: &Region| {
+            let c = r.centroid();
+            (c.0 - target.0).hypot(c.1 - target.1)
+        };
+        let bull = self
+            .regions
             .iter()
-            .enumerate()
-            .filter(|(i, s)| *i != treble_i && s.inside(treble))
-            .min_by(|(_, a), (_, b)| {
-                let da = (a.centroid().x - target.x).hypot(a.centroid().y - target.y);
-                let db = (b.centroid().x - target.x).hypot(b.centroid().y - target.y);
-                da.total_cmp(&db)
-            })
+            .filter(|r| r.label != treble.label && r.inside(treble))
+            .min_by(|a, b| distance(a).total_cmp(&distance(b)))
             .ok_or(DetectError::RingsNotFound("bull"))?;
-        Ok((index(double_i), index(treble_i), bull.centroid()))
+        let (x, y) = bull.centroid();
+        Ok((double.label, treble.label, Pixel::new(x, y)))
     }
 }
 
@@ -588,6 +508,26 @@ mod tests {
             .unwrap();
         let mapped = detection.fit.homography.to_board(probe).unwrap();
         assert_eq!(BoardDimensions::wdf().hit(mapped).label(), "S20");
+    }
+
+    #[test]
+    fn colour_classes_match_recorded_samples() {
+        // Samples from the 2026-10-29 recordings, auto and fixed 5500 K white balance.
+        for red in [[171, 27, 50], [234, 0, 9], [100, 9, 18]] {
+            assert_eq!(classify(red), Some(Colour::Red), "{red:?}");
+        }
+        for green in [[0, 156, 112], [17, 110, 100], [46, 148, 109]] {
+            assert_eq!(classify(green), Some(Colour::Green), "{green:?}");
+        }
+        for other in [
+            [180, 190, 191],
+            [246, 175, 183],
+            [47, 0, 6],
+            [20, 19, 25],
+            [122, 99, 91],
+        ] {
+            assert_eq!(classify(other), None, "{other:?}");
+        }
     }
 
     #[test]
