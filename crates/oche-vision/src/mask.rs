@@ -215,6 +215,112 @@ pub fn principal_axis(points: impl IntoIterator<Item = (f64, f64)>) -> Option<Ax
     })
 }
 
+/// Centre line of a dart's barrel and shaft, excluding the flight.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShaftFit {
+    /// Point on the line and unit direction.
+    pub point: (f64, f64),
+    pub direction: (f64, f64),
+    /// Extent of the slices used, along the line.
+    pub ends: [(f64, f64); 2],
+    /// Midpoints between the two silhouette edges of each used slice.
+    pub midpoints: Vec<(f64, f64)>,
+    /// RMS distance of the used midpoints from the line, in pixels.
+    pub rms_px: f64,
+}
+
+/// Fits a dart's centre line from its silhouette pixels.
+///
+/// The silhouette is cut into one-pixel slices across the `rough` axis. Each
+/// slice's two outer edges give a width and a midpoint. Slices wider than
+/// `max_width_ratio` times the narrow-quartile width (the flight) are dropped,
+/// and a line is fitted through the remaining midpoints with iterative outlier
+/// removal. Unlike a principal axis of all pixels, this is not pulled sideways
+/// by an asymmetric flight. Returns `None` for fewer than `min_slices` slices.
+pub fn shaft_axis(
+    points: &[(f64, f64)],
+    rough: &Axis,
+    max_width_ratio: f64,
+    min_slices: usize,
+) -> Option<ShaftFit> {
+    let (c, d) = (rough.centroid, rough.direction);
+    let n = (-d.1, d.0);
+    let mut slices: std::collections::BTreeMap<i64, (f64, f64)> = std::collections::BTreeMap::new();
+    for &(x, y) in points {
+        let (dx, dy) = (x - c.0, y - c.1);
+        let t = (dx * d.0 + dy * d.1).floor() as i64;
+        let s = dx * n.0 + dy * n.1;
+        let entry = slices.entry(t).or_insert((s, s));
+        entry.0 = entry.0.min(s);
+        entry.1 = entry.1.max(s);
+    }
+    let mut widths: Vec<f64> = slices.values().map(|(lo, hi)| hi - lo + 1.0).collect();
+    if widths.len() < min_slices {
+        return None;
+    }
+    widths.sort_by(f64::total_cmp);
+    let narrow = widths[widths.len() / 4];
+    let mut samples: Vec<(f64, f64)> = slices
+        .iter()
+        .filter(|(_, (lo, hi))| hi - lo + 1.0 <= max_width_ratio * narrow)
+        .map(|(t, (lo, hi))| (*t as f64 + 0.5, (lo + hi) / 2.0))
+        .collect();
+    let (mut a, mut b, mut rms) = (0.0, 0.0, 0.0);
+    for _ in 0..4 {
+        if samples.len() < min_slices {
+            return None;
+        }
+        (a, b) = fit_line(&samples)?;
+        let residuals: Vec<f64> = samples.iter().map(|(t, m)| m - (a + b * t)).collect();
+        rms = (residuals.iter().map(|r| r * r).sum::<f64>() / residuals.len() as f64).sqrt();
+        let limit = (2.5 * rms).max(1.0);
+        let before = samples.len();
+        samples = samples
+            .into_iter()
+            .zip(&residuals)
+            .filter(|(_, r)| r.abs() <= limit)
+            .map(|(s, _)| s)
+            .collect();
+        if samples.len() == before {
+            break;
+        }
+    }
+    let to_image = |t: f64, s: f64| (c.0 + d.0 * t + n.0 * s, c.1 + d.1 * t + n.1 * s);
+    let (t0, t1) = samples
+        .iter()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), (t, _)| {
+            (lo.min(*t), hi.max(*t))
+        });
+    let mean_t = samples.iter().map(|(t, _)| t).sum::<f64>() / samples.len() as f64;
+    let norm = (1.0 + b * b).sqrt();
+    Some(ShaftFit {
+        point: to_image(mean_t, a + b * mean_t),
+        direction: ((d.0 + n.0 * b) / norm, (d.1 + n.1 * b) / norm),
+        ends: [to_image(t0, a + b * t0), to_image(t1, a + b * t1)],
+        midpoints: samples.iter().map(|(t, m)| to_image(*t, *m)).collect(),
+        rms_px: rms,
+    })
+}
+
+/// Least-squares `m = a + b·t`.
+fn fit_line(samples: &[(f64, f64)]) -> Option<(f64, f64)> {
+    let n = samples.len() as f64;
+    let (st, sm) = samples
+        .iter()
+        .fold((0.0, 0.0), |(st, sm), (t, m)| (st + t, sm + m));
+    let (mt, mm) = (st / n, sm / n);
+    let (mut stt, mut stm) = (0.0, 0.0);
+    for (t, m) in samples {
+        stt += (t - mt) * (t - mt);
+        stm += (t - mt) * (m - mm);
+    }
+    if stt <= f64::EPSILON {
+        return None;
+    }
+    let b = stm / stt;
+    Some((mm - b * mt, b))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -275,5 +381,49 @@ mod tests {
         assert!((slope - 0.5).abs() < 0.02, "{slope}");
         assert!(axis.spread.0 > 10.0 * axis.spread.1);
         assert!(principal_axis([(1.0, 1.0), (1.0, 1.0)]).is_none());
+    }
+
+    /// A synthetic dart along y = 0.3·x + 100 for x in 0..200, 5 px wide,
+    /// with a 40 px wide flight hanging to one side over x in 150..200.
+    fn dart_with_flight() -> Vec<(f64, f64)> {
+        let mut points = Vec::new();
+        for x in 0..200 {
+            let centre = 0.3 * f64::from(x) + 100.0;
+            let (below, above) = if x >= 150 { (-4, 40) } else { (-2, 2) };
+            for w in below..=above {
+                points.push((f64::from(x), (centre + f64::from(w)).round()));
+            }
+        }
+        points
+    }
+
+    #[test]
+    fn shaft_axis_ignores_an_asymmetric_flight() {
+        let points = dart_with_flight();
+        let rough = principal_axis(points.iter().copied()).unwrap();
+        // The principal axis is pulled toward the flight near the tip.
+        let rough_error = (rough.centroid.1
+            + rough.direction.1 / rough.direction.0 * (0.0 - rough.centroid.0))
+            - 100.0;
+        assert!(rough_error.abs() > 3.0, "{rough_error}");
+
+        let shaft = shaft_axis(&points, &rough, 2.0, 20).unwrap();
+        let slope = shaft.direction.1 / shaft.direction.0;
+        let at_tip = shaft.point.1 + slope * (0.0 - shaft.point.0);
+        assert!((slope - 0.3).abs() < 0.01, "{slope}");
+        assert!((at_tip - 100.0).abs() < 1.0, "{at_tip}");
+        assert!(
+            shaft.midpoints.iter().all(|p| p.0 < 152.0),
+            "flight slices dropped"
+        );
+    }
+
+    #[test]
+    fn shaft_axis_needs_enough_slices() {
+        let points: Vec<_> = (0..5)
+            .flat_map(|x| (0..3).map(move |y| (f64::from(x), f64::from(y))))
+            .collect();
+        let rough = principal_axis(points.iter().copied()).unwrap();
+        assert!(shaft_axis(&points, &rough, 2.0, 20).is_none());
     }
 }

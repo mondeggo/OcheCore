@@ -1,8 +1,8 @@
 //! Exploratory offline dart analysis of a recorded session.
 //!
 //! Splits the session into still periods common to all cameras, compares each
-//! still period with the previous one, and fits the principal axis of the
-//! largest changed region per camera. Axes become board lines that are fused
+//! still period with the previous one, and fits the barrel and shaft centre
+//! line of the largest changed region per camera. Axes become board lines that are fused
 //! into an impact. Parameters are exploratory starting points, not tuned or
 //! validated values.
 
@@ -12,7 +12,7 @@ use anyhow::{Context, Result};
 use oche_calibration::{Homography, Pixel};
 use oche_domain::board::{BoardDimensions, BoardPoint};
 use oche_vision::image::RgbImage;
-use oche_vision::mask::{Axis, GrayImage, dilate, label, principal_axis};
+use oche_vision::mask::{Axis, GrayImage, ShaftFit, dilate, label, principal_axis, shaft_axis};
 use oche_vision::{FusionLimits, LineObservation, fuse_lines};
 
 use crate::CameraRecording;
@@ -30,7 +30,12 @@ pub struct Settings {
     /// Dilation radius used only to group mask pieces into one region.
     pub group_radius: usize,
     pub min_elongation: f64,
+    /// Slices wider than this multiple of the narrow-quartile width are flight.
+    pub max_width_ratio: f64,
+    pub min_slices: usize,
     pub line_sigma_mm: f64,
+    /// Uncertainty of a principal-axis line used when no shaft fit exists.
+    pub fallback_sigma_mm: f64,
     pub limits: FusionLimits,
 }
 
@@ -46,7 +51,10 @@ impl Default for Settings {
             min_region: 80,
             group_radius: 4,
             min_elongation: 3.0,
+            max_width_ratio: 2.0,
+            min_slices: 20,
             line_sigma_mm: 2.0,
+            fallback_sigma_mm: 4.0,
             limits: FusionLimits {
                 min_angle_deg: 10.0,
                 max_residual_sigma: 3.0,
@@ -68,6 +76,7 @@ pub struct CameraChange {
     /// still frame than the previous one did, i.e. something arrived.
     pub arrival_score: f64,
     pub region: Option<(usize, Axis)>,
+    pub shaft: Option<ShaftFit>,
     pub line: Option<LineObservation>,
     pub mask: Vec<bool>,
     pub after: GrayImage,
@@ -218,20 +227,38 @@ pub fn analyse(
                     .filter(move |(_, (l, m))| **l == label && **m)
                     .map(|(i, _)| ((i % after.width) as f64, (i / after.width) as f64))
             };
-            let region = regions
+            let largest = regions
                 .iter()
                 .map(|r| (r.label, points_of(r.label).count()))
                 .filter(|(_, count)| *count >= settings.min_region)
-                .max_by_key(|(_, count)| *count)
-                .and_then(|(label, count)| {
-                    principal_axis(points_of(label)).map(|axis| (count, axis))
-                });
-            let line = region.and_then(|(_, axis)| {
-                if axis.spread.0 < settings.min_elongation * axis.spread.1.max(0.5) {
-                    return None;
+                .max_by_key(|(_, count)| *count);
+            let region = largest.and_then(|(label, count)| {
+                principal_axis(points_of(label)).map(|axis| (count, axis))
+            });
+            // The principal axis orients the slices. The line comes from the
+            // barrel and shaft centre line, which the flight cannot pull; when
+            // too little shaft is visible, the principal axis is used with a
+            // larger uncertainty so precise views dominate the fusion.
+            let elongated = region.filter(|(_, axis)| {
+                axis.spread.0 >= settings.min_elongation * axis.spread.1.max(0.5)
+            });
+            let shaft = largest.zip(elongated).and_then(|((label, _), (_, axis))| {
+                let points: Vec<_> = points_of(label).collect();
+                shaft_axis(
+                    &points,
+                    &axis,
+                    settings.max_width_ratio,
+                    settings.min_slices,
+                )
+            });
+            let fitted = match (&shaft, elongated) {
+                (Some(shaft), _) => Some((shaft.point, shaft.direction, settings.line_sigma_mm)),
+                (None, Some((_, axis))) => {
+                    Some((axis.centroid, axis.direction, settings.fallback_sigma_mm))
                 }
-                let (cx, cy) = axis.centroid;
-                let (dx, dy) = axis.direction;
+                (None, None) => None,
+            };
+            let line = fitted.and_then(|((cx, cy), (dx, dy), sigma_mm)| {
                 let homography = calibration.get(&camera.camera)?;
                 let line = homography.line_to_board(
                     Pixel::new(cx, cy),
@@ -240,7 +267,7 @@ pub fn analyse(
                 Some(LineObservation {
                     camera: camera.camera,
                     line,
-                    sigma_mm: settings.line_sigma_mm,
+                    sigma_mm,
                 })
             });
             changes.push(CameraChange {
@@ -248,6 +275,7 @@ pub fn analyse(
                 changed_pixels,
                 arrival_score,
                 region,
+                shaft,
                 line,
                 mask,
                 after: after.clone(),
@@ -273,8 +301,8 @@ impl Event {
     }
 }
 
-/// Grey frame with the change mask in red, the fitted axis in cyan, and the
-/// fused impact (if any) in magenta.
+/// Grey frame with the change mask in red, shaft slice midpoints in yellow,
+/// the fitted shaft line in cyan, and the fused impact (if any) in magenta.
 pub fn overlay(
     change: &CameraChange,
     homography: Option<&Homography>,
@@ -290,16 +318,18 @@ pub fn overlay(
         };
         image.data[i * 3..i * 3 + 3].copy_from_slice(&colour);
     }
-    if let Some((_, axis)) = change.region {
-        let reach = 4.0 * axis.spread.0;
-        let mut t = -reach;
-        while t <= reach {
-            let (x, y) = (
-                axis.centroid.0 + axis.direction.0 * t,
-                axis.centroid.1 + axis.direction.1 * t,
-            );
+    if let Some(shaft) = &change.shaft {
+        // Extend past both ends so the line visibly reaches the board.
+        let [a, b] = shaft.ends;
+        let length = (b.0 - a.0).hypot(b.1 - a.1);
+        let mut t = -0.5 * length;
+        while t <= 1.5 * length {
+            let (x, y) = (a.0 + shaft.direction.0 * t, a.1 + shaft.direction.1 * t);
             image.set(x.round() as i64, y.round() as i64, [0, 255, 255]);
             t += 0.5;
+        }
+        for (x, y) in &shaft.midpoints {
+            image.set(x.round() as i64, y.round() as i64, [255, 255, 0]);
         }
     }
     if let Some(p) = homography.zip(impact).and_then(|(h, p)| h.to_image(p)) {

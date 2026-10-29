@@ -263,6 +263,14 @@ fn main() -> Result<()> {
                             axis.spread.0, axis.spread.1
                         )
                     });
+                    let region = match &c.shaft {
+                        Some(s) => format!(
+                            "{region}, shaft {} slices rms {:.2} px",
+                            s.midpoints.len(),
+                            s.rms_px
+                        ),
+                        None => format!("{region}, no shaft"),
+                    };
                     println!(
                         "  cam{}: {} changed px, arrival {:+.1}, {region}, line {}",
                         c.camera,
