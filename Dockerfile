@@ -29,10 +29,8 @@ FROM scratch
 COPY --from=binary /out/oche-core /usr/local/bin/oche-core
 COPY --from=binary /out/THIRD_PARTY_NOTICES.txt /usr/share/doc/ochecore/THIRD_PARTY_NOTICES.txt
 COPY LICENSE NOTICE /usr/share/doc/ochecore/
-COPY --chown=65532:65532 docker/data/ /data/
 USER 65532:65532
 ENV XDG_CONFIG_HOME=/data TERM=xterm-256color PATH=/usr/local/bin
-VOLUME ["/data"]
 EXPOSE 5180
 LABEL org.opencontainers.image.title="OcheCore" \
       org.opencontainers.image.description="Offline board control service and terminal UI" \

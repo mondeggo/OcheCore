@@ -4,10 +4,15 @@ services:
     build:
       context: .
     restart: unless-stopped
+    user: "${OCHECORE_UID:-65532}:${OCHECORE_GID:-65532}"
     ports:
       - "${OCHECORE_BIND:-127.0.0.1}:${OCHECORE_PORT:-5180}:5180"
     volumes:
-      - board-data:/data
+      - type: bind
+        source: ${OCHECORE_DATA_DIR:-./data}
+        target: /data
+        bind:
+          create_host_path: false
     read_only: true
     cap_drop:
       - ALL
@@ -20,6 +25,3 @@ services:
       start_period: 5s
       retries: 3
     stop_grace_period: 10s
-
-volumes:
-  board-data:

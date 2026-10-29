@@ -181,13 +181,21 @@ Autodarts adapters.
 ## Docker
 
 ```sh
+mkdir -p data
+export OCHECORE_UID=$(id -u) OCHECORE_GID=$(id -g)
 docker compose up --build -d
 docker compose exec ochecore oche-core remote
 docker compose exec ochecore oche-core status --json
 docker compose down
 ```
 
-Compose persists configuration in `board-data` and publishes port 5180 on loopback.
+Compose mounts the host folder `./data` at `/data` and publishes port 5180 on loopback.
+Set `OCHECORE_DATA_DIR` to use another existing folder. The UID/GID variables above
+run the container as your host user so it can write to that folder; keep them set
+when running Compose, or save their numeric values in `.env`. Without overrides,
+the container runs as UID/GID 65532 and the folder must be writable by that user.
+Existing installations using the `board-data` named volume must copy their saved
+configuration into the host folder before switching to preserve board identity.
 Set `OCHECORE_PORT=5181` to coexist with a service already using that port. Set
 `OCHECORE_BIND=0.0.0.0` explicitly for trusted LAN access.
 
@@ -201,7 +209,7 @@ OCHECORE_IMAGE=ghcr.io/OWNER/REPOSITORY:vX.Y.Z docker compose up -d --no-build
 The final image contains a static executable and notices, runs as UID/GID 65532,
 and needs no shell, compiler, Internet, or camera permissions. `/data` must be
 writable; the rest of the filesystem can be read only. `docker compose down -v`
-deletes saved board identity/settings. Camera mappings will accompany capture.
+does not delete the host data folder. Camera mappings will accompany capture.
 
 ## Development and releases
 

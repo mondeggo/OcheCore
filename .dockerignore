@@ -10,7 +10,5 @@
 !crates/**
 !scripts/
 !scripts/third_party_notices.py
-!docker/
-!docker/**
 !dist/
 !dist/**

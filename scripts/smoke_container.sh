@@ -2,16 +2,24 @@
 set -euo pipefail
 image=${1:?usage: smoke_container.sh IMAGE}
 container="ochecore-smoke-$$-$RANDOM"
-volume="$container-data"
+data_dir=$(mktemp -d)
 cleanup() {
   docker rm -f "$container" >/dev/null 2>&1 || true
-  docker volume rm "$volume" >/dev/null 2>&1 || true
+  rm -rf "$data_dir"
 }
 trap cleanup EXIT
-docker volume create "$volume" >/dev/null
+# Match the host folder owner, as in the documented Compose setup.
+test_uid=$(id -u)
+test_gid=$(id -g)
+if [[ "$test_uid" == 0 ]]; then
+  test_uid=65532
+  test_gid=65532
+  chown "$test_uid:$test_gid" "$data_dir"
+fi
 docker run --detach --name "$container" --network none --read-only \
+  --user "$test_uid:$test_gid" \
   --cap-drop ALL --security-opt no-new-privileges:true \
-  --mount "type=volume,source=$volume,target=/data" \
+  --mount "type=bind,source=$data_dir,target=/data" \
   "$image" --bind 0.0.0.0 run --demo >/dev/null
 ready=false
 for _ in {1..40}; do
@@ -43,4 +51,4 @@ assert a['config']['board']['id'] == b['config']['board']['id']
 assert b['config']['board']['name'] == 'Container board'
 assert a['session_id'] != b['session_id']
 PY
-echo 'PASS: non-root/read-only container, offline controls, synthetic visit, persistent identity and configuration'
+echo 'PASS: non-root/read-only container, host data folder, offline controls, synthetic visit, persistent identity and configuration'
