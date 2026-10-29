@@ -58,6 +58,31 @@ and compatibility claims; it does not gate the native control foundation.
   isolates the V4L2 discovery ioctl boundary. Musl is the release
   C runtime; there is no OpenCV, camera SDK, or decoder FFI yet.
 
+- **Board geometry (`oche-domain::board`):** millimetres, bull at the origin,
+  +y toward 20. Nominal radii come from the
+  [WDF approved-equipment specification](https://site.dartswdf.com/rules/approved-by-wdf/):
+  double outer edge 170.0 mm, treble 107.4 mm, ring inside width 8.0 mm, bull and
+  outer-bull inside diameters 12.7 and 31.8 mm. An older 1995 WDF text gives a
+  107.0 mm treble. Boundaries are zero-width circles and radials; every hit
+  reports its distance to the nearest wire so callers can treat near-wire
+  impacts as ambiguous. The installed board has not been measured yet.
+- **Calibration (`oche-calibration`):** per-camera image-to-board homography by
+  normalized DLT from named anchors (bull plus radial-wire crossings on the four
+  ring boundaries). Rejects fewer than four points, non-finite input, rank
+  deficiency, and points on both sides of the vanishing line; reports per-point
+  residuals in millimetres for fitted and held-out anchors. The 9x9 symmetric
+  eigen solve is a small in-crate Jacobi routine, so no linear-algebra dependency
+  was added. Lens distortion is not modelled yet; real residuals will show
+  whether it is needed.
+- **Line fusion (`oche-vision`):** a shaft mapped through a homography gives a
+  board line through the impact, not a point. Lines from at least two distinct
+  cameras are intersected by weighted least squares with a covariance ellipse.
+  It abstains when lines are too close to parallel. Three lines can detect
+  disagreement but cannot attribute it, so a view is rejected only when at
+  least three consistent views remain; otherwise it abstains. With exactly
+  two lines, agreement is reported as unverified. Angle and residual limits are
+  required inputs without defaults until recordings justify values.
+
 Standby changes the control lifecycle only; speed presets have no processing
 effect until capture/vision exists. No Autodarts adapter is advertised before
 observed contracts and unchanged-client tests exist. These limits are visible

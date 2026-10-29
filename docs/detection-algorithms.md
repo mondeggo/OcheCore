@@ -1,8 +1,11 @@
 # Detection algorithms to evaluate
 
 Status: proposals, not implemented detectors. Native controls and requested camera
-settings work today; acquisition, calibration, and live scoring remain deferred.
-No algorithm below has been verified on this board's cameras or recordings.
+settings work today. Board scoring geometry, homography fitting, and multi-view
+line fusion exist as tested library code (see [architecture](architecture.md)),
+but acquisition, anchor detection, shaft extraction, and live scoring remain
+deferred. No algorithm below has been verified on this board's cameras or
+recordings.
 
 ## Recommended first baseline: frame difference and multiple views
 

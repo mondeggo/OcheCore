@@ -24,9 +24,30 @@ As of 2026-10-29:
 - Linux device/mode discovery is implemented using query-only V4L2 calls. This
   development host has no video devices; dropdown tests use explicitly synthetic
   fixtures. Verification on the board hardware is still needed.
-- No recordings, ground-truth labels, calibration data, hardware measurements,
-  or third-party compatibility test results are present. Native service and
-  CLI/TUI integration tests run independently of those inputs.
+- Board host inventory (operator's Raspberry Pi, read locally on 2026-10-29):
+  Raspberry Pi 4 Model B Rev 1.1, Debian 13 (trixie), kernel 6.18.50+rpt-rpi-v8
+  aarch64, 3.7 GiB RAM, 4 cores. Three cameras report the card name
+  "Autodarts DIY Cam" and sit on USB ports 1.1, 1.2, and 1.4 of one 480 Mbit/s
+  hub. Each exposes `video-index0` (capture) and `video-index1` under
+  `/dev/v4l/by-path`. `v4l2-ctl --list-formats-ext` lists only MJPG, at
+  1920x1080, 1280x1024, 1280x960, 1280x720, 848x480, and 800x600 with 10–30 FPS,
+  plus 160x120. Controls include manual exposure (2–1250, units of 100 µs),
+  gain, and auto/manual white balance at 2800–6500 K.
+- Capture observations on that host, 1280x720 MJPG at 30 FPS on all three
+  cameras with `v4l2-ctl` streaming: delivered 29.98 FPS per camera with
+  kernel-monotonic start-of-exposure timestamps. Writing all three streams
+  (about 5.4 MB/s) directly to the SD card lost about 11% of frames in
+  simultaneous bursts; recording into RAM (`/dev/shm`) lost none in 5 s and 90 s
+  sessions. The SD card is the suspected cause; this is not yet measured.
+- Under the board's LED light ring, every manual white-balance temperature
+  tested (4600, 5500, 6500 K) produced a magenta or orange cast, and turning
+  auto white balance off reverts to the stored manual temperature instead of
+  holding the auto result. Auto white balance with manual exposure 100 and gain 64
+  gave neutral images. Control values reset when a camera re-enumerates, so the
+  capture service must apply them at start.
+- Recordings and human labels exist outside Git (see below). No calibration
+  data, accuracy measurements, or third-party compatibility test results are
+  present.
 
 ## Inputs from the operator
 
@@ -109,6 +130,17 @@ and client code before treating any route or payload as a contract.
 Keep bulk footage under ignored `recordings/` or in external storage. Each session
 needs camera identities/settings, timestamps and synchronization limits, calibration
 version, lighting/placement notes, and independently measured impact/event labels.
+
+Sessions recorded on 2026-10-29 with all three cameras (1280x720 MJPG 30 FPS),
+stored outside Git with per-frame timestamp logs and a `meta.txt` of devices,
+controls, and lighting:
+
+| Session | Content | Labels |
+| --- | --- | --- |
+| `first-visit` | Light ring off, several visits and takeouts, ~11% dropped frames | None; debug only |
+| `empty-calib-ring-on` | 5 s empty board, fixed 5500 K (magenta cast) | Not applicable |
+| `visit1-labelled` | Four visits incl. bounce-outs with re-throws, a dart outside the scoring area, and a flight occluding one camera; fixed 5500 K | Thrower's visit labels typed after the session; singles do not record inner/outer |
+| `empty-calib-autowb` | 5 s empty board, auto white balance | Not applicable |
 
 - [ ] Record empty board, single throws, three-dart visits, grouped darts,
   wire-adjacent impacts, hands, early/partial/full takeout, and lighting changes.

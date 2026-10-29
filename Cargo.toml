@@ -1,5 +1,12 @@
 [workspace]
-members = ["crates/oche-domain", "crates/oche-engine", "crates/oche-api", "crates/oche-cli"]
+members = [
+    "crates/oche-domain",
+    "crates/oche-calibration",
+    "crates/oche-vision",
+    "crates/oche-engine",
+    "crates/oche-api",
+    "crates/oche-cli",
+]
 resolver = "3"
 
 [workspace.package]

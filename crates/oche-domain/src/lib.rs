@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, net::IpAddr};
 use uuid::Uuid;
 
+pub mod board;
+
 pub const CONFIG_VERSION: u32 = 1;
 pub const DEFAULT_PORT: u16 = 5180;
 pub const HISTORY_LIMIT: usize = 64;

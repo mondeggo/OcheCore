@@ -906,6 +906,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "oche-calibration"
+version = "0.1.0"
+dependencies = [
+ "oche-domain",
+ "serde",
+]
+
+[[package]]
 name = "oche-cli"
 version = "0.1.0"
 dependencies = [
@@ -944,6 +952,14 @@ dependencies = [
  "tokio",
  "toml",
  "uuid",
+]
+
+[[package]]
+name = "oche-vision"
+version = "0.1.0"
+dependencies = [
+ "oche-domain",
+ "serde",
 ]
 
 [[package]]
