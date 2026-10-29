@@ -1,4 +1,32 @@
-# OcheCore
+<p align="center">
+  <img src="docs/brand/ochecore-icon.svg" width="128" height="128" alt="OcheCore: a dartboard and dart framed by terminal brackets">
+</p>
+
+<h1 align="center">OcheCore</h1>
+
+<p align="center">
+  <b>Offline dartboard control, built in Rust.</b><br>
+  One daemon. A command line and an interactive terminal UI.<br>
+  Your board, managed locally or across your LAN.
+</p>
+
+<p align="center">
+  <img alt="Built with Rust" src="https://img.shields.io/badge/built_with-Rust-b7410e?style=flat-square&amp;logo=rust">
+  <img alt="Platform: Linux" src="https://img.shields.io/badge/platform-Linux-2f7bf5?style=flat-square&amp;logo=linux&amp;logoColor=white">
+  <img alt="Interface: CLI and TUI" src="https://img.shields.io/badge/interface-CLI%20%2B%20TUI-0d9488?style=flat-square">
+  <a href="LICENSE"><img alt="License: PolyForm Noncommercial" src="https://img.shields.io/badge/license-PolyForm%20Noncommercial-3a3a3a?style=flat-square"></a>
+  <img alt="Status: early development" src="https://img.shields.io/badge/status-early%20development-d69e2e?style=flat-square">
+</p>
+
+<p align="center">
+  <a href="#run-from-source">Get started</a> ·
+  <a href="#terminal-ui">Terminal UI</a> ·
+  <a href="#docker">Docker</a> ·
+  <a href="docs/native-api.md">Native API</a> ·
+  <a href="oche-core-roadmap.md">Roadmap</a>
+</p>
+
+<br>
 
 Offline Rust board control service, command-line tools, and an interactive terminal
 UI. The control foundation works without cameras or recordings. Camera capture,

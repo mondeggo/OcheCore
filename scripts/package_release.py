@@ -28,7 +28,8 @@ def main():
              "LICENSE": Path("LICENSE"), "NOTICE": Path("NOTICE"),
              "README.md": Path("README.md"), "AGENTS.md": Path("AGENTS.md"),
              "oche-core-roadmap.md": Path("oche-core-roadmap.md"), "compose.yaml": Path("compose.yaml")}
-    files.update({str(path): path for path in sorted(Path("docs").glob("*.md"))})
+    files.update({str(path): path for path in sorted(Path("docs").rglob("*"))
+                  if path.is_file() and path.suffix in {".md", ".svg"}})
     with archive.open("wb") as raw, gzip.GzipFile(filename="", fileobj=raw, mode="wb", mtime=epoch) as compressed:
         with tarfile.open(fileobj=compressed, mode="w") as tar:
             for relative, source in files.items():
