@@ -22,3 +22,6 @@ tempfile.workspace = true
 
 [lints]
 workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+linux-video = "0.1.1"

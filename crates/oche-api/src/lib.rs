@@ -1,4 +1,5 @@
 //! Versioned native HTTP API. No Autodarts routes are emulated here.
+mod cameras;
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, State, rejection::JsonRejection},
@@ -29,6 +30,8 @@ pub struct Service {
     requests: Arc<Semaphore>,
     subscribers: Arc<Semaphore>,
     shutdown: watch::Sender<bool>,
+    camera_probe: Arc<Semaphore>,
+    camera_cache: Arc<Mutex<Option<(Instant, CameraInventory)>>>,
 }
 
 impl Service {
@@ -38,6 +41,8 @@ impl Service {
             requests: Arc::new(Semaphore::new(32)),
             subscribers: Arc::new(Semaphore::new(16)),
             shutdown: watch::channel(false).0,
+            camera_probe: Arc::new(Semaphore::new(1)),
+            camera_cache: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -87,6 +92,7 @@ fn payload<T>(input: Result<Json<T>, JsonRejection>) -> Result<T, Failure> {
 pub fn router(service: Service) -> Router {
     Router::new()
         .route("/api/v1/status", get(status))
+        .route("/api/v1/cameras/available", get(available_cameras))
         .route("/api/v1/config", get(config).put(configure))
         .route("/api/v1/command", post(command))
         .route("/api/v1/events", get(events))
@@ -103,6 +109,30 @@ pub fn router(service: Service) -> Router {
 
 async fn status(State(service): State<Service>) -> Result<Json<Snapshot>, Failure> {
     service.access(|e| Ok(e.snapshot())).await.map(Json)
+}
+
+async fn available_cameras(
+    State(service): State<Service>,
+) -> Result<Json<CameraInventory>, Failure> {
+    if let Some((time, inventory)) = service.camera_cache.lock().unwrap().as_ref()
+        && time.elapsed() < Duration::from_secs(5)
+    {
+        return Ok(Json(inventory.clone()));
+    }
+    let permit = service
+        .camera_probe
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| Failure(error("busy", "camera discovery is already running")))?;
+    let cache = service.camera_cache.clone();
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let inventory = cameras::discover();
+        *cache.lock().unwrap() = Some((Instant::now(), inventory.clone()));
+        Json(inventory)
+    })
+    .await
+    .map_err(|_| Failure(error("internal_error", "camera discovery failed")))
 }
 
 async fn config(State(service): State<Service>) -> Result<Json<Config>, Failure> {

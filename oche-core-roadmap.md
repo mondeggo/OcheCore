@@ -128,10 +128,10 @@ Provide an explicit `update` command after release packaging exists. Updates req
 
 ### TUI screens
 
-1. **Board:** implemented single dashboard for board/service status, the three-dart
-   visit, board/network/detection configuration, and one to four camera slots.
-   Camera addition/removal and device, width, height, FPS, and rotation editing
-   share this screen. Scroll on smaller terminals; mouse and keyboard are supported.
+1. **Board:** compact board/network/detection settings, three correctable darts,
+   and inline camera rows with device, resolution, FPS, rotation, and an unavailable
+   calibration button. Choices use read-only daemon-side V4L2 queries; hardware
+   verification is pending. Camera addition/removal shares this screen. Scroll on smaller terminals; mouse and keyboard are supported.
    Future capture diagnostics, lens correction, calibration, and actual detection
    controls belong here once their backends exist.
 2. **Events:** implemented scrollable diagnostic history of all retained native

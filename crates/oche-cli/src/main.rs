@@ -60,6 +60,12 @@ enum Action {
     Start,
     Stop,
     Reset,
+    /// Correct an existing dart without changing physical occupancy.
+    Correct {
+        #[arg(value_parser = clap::value_parser!(u8).range(1..=3))]
+        dart: u8,
+        label: String,
+    },
     Wake,
     /// Follow native events; reconnects with a fresh snapshot.
     Events {
@@ -113,6 +119,8 @@ enum ConfigAction {
 
 #[derive(Subcommand)]
 enum CameraAction {
+    /// Query real devices and advertised modes on the daemon's machine.
+    Available,
     /// Show requested camera slots; hardware enumeration will arrive with capture.
     List,
     Inspect {
@@ -263,6 +271,20 @@ async fn execute(args: Args) -> Result<()> {
         Some(Action::Start) => show(&client.command(&Command::Start).await?, args.json)?,
         Some(Action::Stop) => show(&client.command(&Command::Stop).await?, args.json)?,
         Some(Action::Reset) => show(&client.command(&Command::Reset).await?, args.json)?,
+        Some(Action::Correct { dart, label }) => {
+            let snapshot = client.snapshot().await?;
+            show(
+                &client
+                    .command(&Command::CorrectThrow {
+                        dart,
+                        label,
+                        expected_revision: snapshot.revision,
+                        expected_session_id: snapshot.session_id,
+                    })
+                    .await?,
+                args.json,
+            )?;
+        }
         Some(Action::Wake) => show(&client.command(&Command::Wake).await?, args.json)?,
         Some(Action::Calibrate { camera, .. }) => {
             client.command(&Command::Calibrate { camera }).await?;
@@ -299,6 +321,26 @@ async fn execute(args: Args) -> Result<()> {
             )?;
         }
         Some(Action::Cameras { action }) => {
+            if matches!(action, CameraAction::Available) {
+                let inventory = client.cameras().await?;
+                if args.json {
+                    print_json(&inventory)?;
+                } else {
+                    for camera in inventory.devices {
+                        println!(
+                            "{}  {}  {} modes{}",
+                            camera.path,
+                            camera.name,
+                            camera.modes.len(),
+                            camera.error.map(|e| format!(" — {e}")).unwrap_or_default()
+                        );
+                    }
+                    for warning in inventory.warnings {
+                        eprintln!("{warning}");
+                    }
+                }
+                return Ok(());
+            }
             let snapshot = client.snapshot().await?;
             let cameras = snapshot
                 .config
@@ -306,6 +348,7 @@ async fn execute(args: Args) -> Result<()> {
                 .into_iter()
                 .filter(|c| match action {
                     CameraAction::List => true,
+                    CameraAction::Available => unreachable!(),
                     CameraAction::Inspect { camera } => c.slot == camera,
                 })
                 .collect::<Vec<_>>();

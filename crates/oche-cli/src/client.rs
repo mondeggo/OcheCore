@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use oche_domain::{ApiError, Command, ConfigChange, NativeEvent, Snapshot};
+use oche_domain::{ApiError, CameraInventory, Command, ConfigChange, NativeEvent, Snapshot};
 use reqwest::{Client as HttpClient, Response};
 use serde::de::DeserializeOwned;
 use std::time::Duration;
@@ -59,6 +59,17 @@ impl Client {
         Self::decode(
             self.http
                 .get(format!("{}/events/recent", self.endpoint))
+                .timeout(Duration::from_secs(3))
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub async fn cameras(&self) -> Result<CameraInventory> {
+        Self::decode(
+            self.http
+                .get(format!("{}/cameras/available", self.endpoint))
                 .timeout(Duration::from_secs(3))
                 .send()
                 .await?,

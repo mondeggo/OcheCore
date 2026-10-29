@@ -21,6 +21,9 @@ As of 2026-10-29:
   no hardware inventory or connection details have been verified here.
 - Rust 1.90.0, Cargo, rustfmt, and Clippy are installed on the development host;
   the repository pins the toolchain and commits its resolved dependencies.
+- Linux device/mode discovery is implemented using query-only V4L2 calls. This
+  development host has no video devices; dropdown tests use explicitly synthetic
+  fixtures. Verification on the board hardware is still needed.
 - No recordings, ground-truth labels, calibration data, hardware measurements,
   or third-party compatibility test results are present. Native service and
   CLI/TUI integration tests run independently of those inputs.

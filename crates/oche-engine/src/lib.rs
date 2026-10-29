@@ -149,6 +149,34 @@ impl Engine {
                     "Calibration requires the future camera and calibration backends. No calibration was changed.",
                 ));
             }
+            Command::CorrectThrow {
+                dart,
+                label,
+                expected_revision,
+                expected_session_id,
+            } => {
+                if expected_revision != self.revision || expected_session_id != self.session_id {
+                    return Err(error(
+                        "conflict",
+                        "visit changed while editing; refresh and try again",
+                    ));
+                }
+                let index = dart
+                    .checked_sub(1)
+                    .filter(|i| *i < 3)
+                    .ok_or_else(|| error("invalid_request", "dart must be 1–3"))?
+                    as usize;
+                let current = self
+                    .throws
+                    .get(index)
+                    .ok_or_else(|| error("conflict", "only an existing throw can be corrected"))?;
+                let mut corrected =
+                    Throw::synthetic(&label).map_err(|e| error("invalid_request", e))?;
+                corrected.synthetic = current.synthetic;
+                corrected.corrected = true;
+                self.throws[index] = corrected;
+                "throw_corrected"
+            }
             Command::DemoThrow { label } => {
                 self.require_demo()?;
                 if self.state != ServiceState::Running {
@@ -262,6 +290,58 @@ mod tests {
         let config = store.initialize().unwrap();
         let engine = Engine::new(config, store, mode, "127.0.0.1:5180".into());
         (dir, engine)
+    }
+
+    #[test]
+    fn corrections_preserve_occupancy_and_reject_stale_or_empty_slots() {
+        let (_dir, mut e) = engine(Mode::Demo);
+        e.command(Command::Start).unwrap();
+        e.command(Command::DemoThrow {
+            label: "T20".into(),
+        })
+        .unwrap();
+        let before = e.snapshot();
+        let command = Command::CorrectThrow {
+            dart: 1,
+            label: "D20".into(),
+            expected_revision: before.revision,
+            expected_session_id: before.session_id,
+        };
+        let after = e.command(command.clone()).unwrap();
+        assert_eq!(after.throws[0].score, 40);
+        assert!(after.throws[0].synthetic && after.throws[0].corrected);
+        assert_eq!(after.physical_darts, before.physical_darts);
+        assert_eq!(after.scene, before.scene);
+        assert_eq!(e.history().last().unwrap().kind, "throw_corrected");
+        assert!(e.command(command).is_err());
+        for (dart, label, session) in [
+            (2, "D20", after.session_id),
+            (0, "D20", after.session_id),
+            (1, "T21", after.session_id),
+            (1, "S1", uuid::Uuid::new_v4()),
+        ] {
+            assert!(
+                e.command(Command::CorrectThrow {
+                    dart,
+                    label: label.into(),
+                    expected_revision: after.revision,
+                    expected_session_id: session
+                })
+                .is_err()
+            );
+            assert_eq!(e.snapshot().revision, after.revision);
+        }
+        e.command(Command::Reset).unwrap();
+        let cleared = e.snapshot();
+        assert!(
+            e.command(Command::CorrectThrow {
+                dart: 1,
+                label: "S1".into(),
+                expected_revision: cleared.revision,
+                expected_session_id: cleared.session_id
+            })
+            .is_err()
+        );
     }
 
     #[test]

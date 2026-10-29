@@ -98,6 +98,8 @@ oche-core config set cameras.1.width 1280
 oche-core config set cameras.1.height 720
 oche-core config set cameras.1.fps 30
 oche-core config set cameras.1.rotation 90
+oche-core correct 1 D20              # correct an existing first dart
+oche-core cameras available --json    # devices/modes on the daemon host
 oche-core cameras list --json
 oche-core cameras inspect --camera 1
 ```
@@ -119,7 +121,9 @@ logical dart visit.
 The setup listen address belongs to this board: loopback permits local clients,
 and `0.0.0.0` listens on all IPv4 interfaces. `--host` selects a daemon to manage;
 it is not a persisted listen setting.
-Supported hardware modes are not enumerated or verified until capture exists.
+Linux camera discovery queries devices and advertised modes without starting capture.
+Only discrete integer FPS values are selectable today; fractional rates and ranged
+modes are reported as limitations. Advertised modes do not prove capture works.
 
 Speed presets: `very_low`, `low`, `default`, `high`, `very_high`. They are saved for
 the future detector and currently have no capture effect. Standby values:
@@ -132,36 +136,45 @@ JSON goes to stdout; errors/diagnostics go to stderr. Exit codes: `0` success,
 
 ## Terminal UI
 
-Two screens: **Board** and **Events**. Board groups the three dart slots, service
-status, board/network/detection settings, and all camera controls in one dashboard.
-Add up to four cameras with **+ Add**; **- Remove last** removes the highest slot
-only after saving the proposed count. Click a camera's device or its width, height,
-FPS, and rotation controls to edit. All existing settings remain available.
+Two screens: **Board** and **Events**. Board begins with board/detection settings,
+then three editable dart slots and compact camera rows. The permanent status,
+help, and control panels have been removed. Errors and save feedback appear only
+when needed.
 
-Events shows every retained native event (up to 64), newest first, with sequence,
-time, session/board IDs, state, revision, scene, physical occupancy, and visit.
-Scroll to reach older entries. For full event payloads or an ongoing diagnostic
-recording, use `oche-core events --json` with the same host/port.
-Both screens work over SSH without terminal image support.
+Click an accepted dart to correct its label (`S1`–`S20`, `D1`–`D20`, `T1`–`T20`,
+`SB`, `DB`, or `MISS`). Empty slots cannot invent throws. Corrections preserve
+physical occupancy and synthetic provenance, and reject stale visits/restarts.
+A `*` marks corrected darts. Live detection is deferred; test corrections in demo.
 
-Mouse support works in terminals that forward mouse events, including xterm.js:
-click tabs and the Start / Stop / Reset / Wake / Quit controls, click a setting
-to edit it, or click a camera field directly. The wheel scrolls the dashboard
-or event history. Editors provide Previous / Next choices and Save /
-Cancel buttons. Text values still use the keyboard. Mouse capture is released
-when the UI closes; keyboard controls remain available.
+Each camera row offers a device dropdown, **Calibrate (N/A)**, resolution, FPS,
+and rotation. Narrow terminals wrap mode controls onto a second line. Choices
+appear in clickable lists; arrows/wheel select and Save applies. Width and height
+are saved atomically. Choose FPS after selecting resolution: resolution changes
+do not silently change saved FPS. Displayed values are requested settings; the
+pickers show currently reported modes. Devices assigned to other slots are
+excluded, including aliases. **+ Add** / **- Remove last** review the new count
+before saving (one to four).
+
+Calibration remains unimplemented; its button explains that and changes nothing.
+Missing devices, permissions, or mode data are reported when opening a picker.
+Discovery runs on the daemon machine, refreshes every five seconds, and does not
+block the control worker. There are no guessed fallback camera capabilities.
+
+Events retains up to 64 native events with sequence/time, session/board IDs,
+state, revision, scene, occupancy, and visit. Use `oche-core events --json` for
+full payloads or an ongoing diagnostic recording.
 
 | Key | Action |
 | --- | --- |
 | Tab / Shift-Tab, or 1 / 2 | Switch Board / Events |
-| s / x / r / w | Start / stop / reset visit / wake |
-| Up / Down | Select camera or setting; scroll in Events |
-| PageUp / PageDown, Home / End | Scroll page, jump to top / bottom |
-| + / - | Add camera / remove last (review count, then save) |
-| Left / Right | Select camera field or cycle editor choices |
+| s / x / r / w | Start / stop / reset visit / wake (no toolbar) |
+| Up / Down | Select setting, dart, or camera; scroll in Events |
+| PageUp / PageDown, Home / End | Scroll |
+| + / - | Add camera / remove last |
+| Left / Right | Select camera field or dropdown value |
 | Enter / Escape | Edit or save / cancel |
 | Ctrl-U | Clear text while editing |
-| t / o | Synthetic T20 / full takeout, demo mode only |
+| t / o | Synthetic T20 / full takeout, demo only |
 | q / Ctrl-C | Close UI |
 
 The daemon is launched with `oche-core run`; the TUI is opened separately with
@@ -269,7 +282,10 @@ docker compose up -d --no-build
 The final image contains a static executable and notices, runs as UID/GID 65532,
 and needs no shell, compiler, Internet, or camera permissions. `/data` must be
 writable; the rest of the filesystem can be read only. `docker compose down -v`
-does not delete the host data folder. Camera mappings will accompany capture.
+does not delete the host data folder. For discovery, explicitly map devices with
+`--device /dev/videoN` (Compose `devices`) and grant the container user the device
+group using `--group-add` / `group_add`. Only accessible mapped devices can be
+queried; privileged mode is unnecessary. Capture remains unimplemented.
 
 ## Development and releases
 

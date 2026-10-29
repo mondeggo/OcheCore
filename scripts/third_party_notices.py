@@ -52,6 +52,18 @@ def main():
             ("LICENSE", "LICENCE", "COPYING", "NOTICE", "COPYRIGHT"))}
         if package.get("license_file"):
             files.add(root / package["license_file"])
+        # These tarballs omit their repository's MIT text. Pin fallbacks to
+        # audited releases and retain upstream provenance in licenses/README.md.
+        fallback = {
+            ("linux-video-core", "0.1.1"): "linux-video-core-0.1.1-LICENSE",
+            ("parse-display", "0.8.2"): "parse-display-0.8.2-LICENSE-MIT",
+            ("parse-display-derive", "0.8.2"): "parse-display-0.8.2-LICENSE-MIT",
+            ("structmeta", "0.2.0"): "structmeta-0.2.0-LICENSE-MIT",
+            ("structmeta-derive", "0.2.0"): "structmeta-0.2.0-LICENSE-MIT",
+        }.get((package["name"], package["version"]))
+        if not files and fallback:
+            root = Path("licenses")
+            files.add(root / fallback)
         if not files:
             raise SystemExit(f"Missing license text for {package['name']} {package['version']}; resolve before distribution")
         sections += ["=" * 72, f"{package['name']} {package['version']}",

@@ -168,6 +168,10 @@ def main():
                 assert cli("stop")["state"] == "stopped"
                 assert cli("wake")["state"] == "running"
 
+                cli("demo", "throw", "T20")
+                inventory = cli("cameras", "available")
+                assert isinstance(inventory["devices"], list)
+
                 # The actual TUI must edit through the daemon and restore terminal state.
                 master, slave = pty.openpty()
                 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 110, 0, 0))
@@ -178,7 +182,7 @@ def main():
                     def connected():
                         if select.select([master], [], [], 0.1)[0]:
                             rendered.extend(os.read(master, 65536))
-                        return b"CONNECTED" in rendered
+                        return b"BOARD & DETECTION" in rendered
                     eventually(connected)
                     def settle_ui():
                         # A successful API response can precede the TUI's next draw.
@@ -199,20 +203,20 @@ def main():
                         os.write(master, f"\x1b[<0;{column};{row}M\x1b[<0;{column};{row}m".encode())
 
                     assert b"\x1b[?1006h" in rendered, "mouse reporting was not enabled"
-                    click(14, 28)  # Stop in the footer.
+                    os.write(master, b"x")  # Controls remain keyboard shortcuts.
                     eventually(lambda: cli("status")["state"] == "stopped")
                     settle_ui()
-                    click(4, 28)  # Start in the footer.
+                    os.write(master, b"s")
                     eventually(lambda: cli("status")["state"] == "running")
                     settle_ui()
-                    click(5, 10)  # Board name row.
+                    click(5, 4)  # Board name row.
                     os.write(master, b"\x15Mouse room")
                     click(20, 17)  # Save in the editor.
                     eventually(lambda: cli("status")["config"]["board"]["name"] == "Mouse room")
                     settle_ui()
-                    click(5, 11)  # Speed row.
-                    click(28, 17)  # Next choice.
-                    click(38, 17)  # Save choice.
+                    click(5, 5)  # Speed dropdown.
+                    settle_ui()
+                    os.write(master, b"\x1b[C\r")
                     eventually(lambda: cli("status")["config"]["detection"]["speed"] == "high")
                     settle_ui()
                     os.write(master, b"+")
@@ -221,15 +225,23 @@ def main():
                     eventually(lambda: len(cli("status")["config"]["cameras"]) == 2)
                     settle_ui()
                     # Select the second camera using the same dashboard, then rotate it.
-                    os.write(master, b"\x1b[B" * 6 + b"\x1b[C" * 4 + b"\r")
+                    os.write(master, b"\x1b[B" * 9 + b"\x1b[C" * 3 + b"\r")
                     time.sleep(0.1)
                     os.write(master, b"\x1b[C\r")
                     eventually(lambda: cli("status")["config"]["cameras"][1]["rotation"] == 90)
                     settle_ui()
-                    click(13, 4)  # Events tab.
+                    click(3, 11)  # First dart, below board settings.
+                    settle_ui()
+                    os.write(master, b"\x15D20\r")
+                    corrected = eventually(lambda: (state if (state := cli("status"))["throws"][0]["label"] == "D20" else None))
+                    assert corrected["throws"][0]["corrected"]
+                    assert corrected["throws"][0]["synthetic"]
+                    assert corrected["physical_darts"] == 1
+                    settle_ui()
+                    click(13, 1)  # Events tab.
                     os.write(master, b"\x1b[F")  # End: oldest retained events.
-                    click(3, 4)   # Back to Board.
-                    click(44, 28)  # Quit in the footer.
+                    click(3, 1)   # Back to Board.
+                    os.write(master, b"q")
                     assert ui.wait(timeout=5) == 0
                     assert termios.tcgetattr(slave) == before, "terminal state not restored"
                     while select.select([master], [], [], 0.1)[0]:

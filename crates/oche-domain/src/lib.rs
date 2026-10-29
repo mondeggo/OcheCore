@@ -213,6 +213,11 @@ impl Config {
                     "device" => camera.device = value.into(),
                     "width" => camera.width = value.parse().map_err(|_| "invalid width")?,
                     "height" => camera.height = value.parse().map_err(|_| "invalid height")?,
+                    "resolution" => {
+                        let (width, height) = value.split_once('x').ok_or("use WIDTHxHEIGHT")?;
+                        camera.width = width.parse().map_err(|_| "invalid width")?;
+                        camera.height = height.parse().map_err(|_| "invalid height")?;
+                    }
                     "fps" => camera.fps = value.parse().map_err(|_| "invalid FPS")?,
                     "rotation" => {
                         camera.rotation = value.parse().map_err(|_| "invalid rotation")?
@@ -265,6 +270,8 @@ pub struct Throw {
     pub label: String,
     pub score: u16,
     pub synthetic: bool,
+    #[serde(default)]
+    pub corrected: bool,
 }
 
 impl Throw {
@@ -295,6 +302,7 @@ impl Throw {
             label,
             score,
             synthetic: true,
+            corrected: false,
         })
     }
 }
@@ -306,9 +314,50 @@ pub enum Command {
     Stop,
     Reset,
     Wake,
-    DemoThrow { label: String },
-    DemoTakeout { remaining: u8 },
-    Calibrate { camera: Option<u8> },
+    DemoThrow {
+        label: String,
+    },
+    DemoTakeout {
+        remaining: u8,
+    },
+    Calibrate {
+        camera: Option<u8>,
+    },
+    CorrectThrow {
+        dart: u8,
+        label: String,
+        expected_revision: u64,
+        expected_session_id: Uuid,
+    },
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CameraInventory {
+    pub devices: Vec<CameraDevice>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CameraDevice {
+    pub path: String,
+    pub aliases: Vec<String>,
+    pub name: String,
+    pub modes: Vec<CameraMode>,
+    pub error: Option<String>,
+}
+
+impl CameraDevice {
+    pub fn matches(&self, path: &str) -> bool {
+        self.path == path || self.aliases.iter().any(|alias| alias == path)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CameraMode {
+    pub width: u32,
+    pub height: u32,
+    pub pixel_format: String,
+    pub fps: Vec<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -40,9 +40,22 @@ and compatibility claims; it does not gate the native control foundation.
 - **Static musl releases:** Linux AMD64/ARM64 executables without a host glibc
   requirement. The non-root Docker image packages the tested executable and
   license notices with a writable data volume.
+- **Camera discovery:** `linux-video` 0.1.1 (MIT) wraps Linux V4L2 ioctls with
+  safe Rust APIs. No workspace unsafe code, bindgen, external executable, or native
+  library is added. The daemon queries capabilities/formats/sizes/intervals without
+  setting formats or streaming. Inspection of the
+  [library source](https://github.com/katyo/linux-video-rs) and the
+  [kernel interval contract](https://cdn.kernel.org/doc/html/latest/userspace-api/media/v4l/vidioc-enum-frameintervals.html)
+  informed this boundary. Prefer by-path, then by-id, then the video node. Worker,
+  cache, and iteration bounds are independent of the command lock. Fractional FPS
+  and ranged modes are not selectable yet; live hardware verification is pending.
+- **Manual corrections:** existing throws only, guarded by session and revision.
+  They preserve physical occupancy and synthetic provenance. Device dropdowns and
+  corrections share the compact Board screen; debug information stays in Events.
 - **Native boundaries:** workspace crates forbid unsafe Rust. Dependencies still
   call OS APIs for networking, terminal control, random IDs, and file locking.
-  `fs2` and `tempfile` isolate locking/atomic-file operations. Musl is the release
+  `fs2` and `tempfile` isolate locking/atomic-file operations; `linux-video`
+  isolates the V4L2 discovery ioctl boundary. Musl is the release
   C runtime; there is no OpenCV, camera SDK, or decoder FFI yet.
 
 Standby changes the control lifecycle only; speed presets have no processing

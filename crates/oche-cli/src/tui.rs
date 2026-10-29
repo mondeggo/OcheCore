@@ -5,7 +5,7 @@ use crossterm::event::{
     KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use futures_util::StreamExt;
-use oche_domain::{Command, ConfigChange, Mode, NativeEvent, Snapshot, Speed};
+use oche_domain::{CameraInventory, Command, ConfigChange, Mode, NativeEvent, Snapshot, Speed};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -25,7 +25,8 @@ const CONFIG_FIELDS: [&str; 6] = [
     "server.port",
     "cameras.count",
 ];
-const CAMERA_FIELDS: [&str; 5] = ["device", "width", "height", "fps", "rotation"];
+const CAMERA_FIELDS: [&str; 5] = ["device", "resolution", "fps", "rotation", "calibrate"];
+const CAMERA_START: usize = CONFIG_FIELDS.len() + 3;
 
 enum Request {
     Command(Command),
@@ -38,6 +39,7 @@ struct View {
     events: Vec<NativeEvent>,
     error: Option<String>,
     feedback: String,
+    inventory: CameraInventory,
 }
 
 struct Editor {
@@ -45,6 +47,7 @@ struct Editor {
     value: String,
     choices: Vec<String>,
     revision: u64,
+    correction: Option<Command>,
 }
 
 #[derive(Default)]
@@ -64,6 +67,8 @@ enum MouseAction {
     Key(KeyCode),
     CameraField(usize, usize),
     Config(usize),
+    Dart(usize),
+    Choice(usize),
 }
 
 struct Hit {
@@ -92,6 +97,24 @@ pub async fn run(client: Client) -> Result<()> {
     let (request_tx, request_rx) = mpsc::channel(8);
     let (view_tx, mut view_rx) = watch::channel(View::default());
     let endpoint = client.endpoint.clone();
+    let camera_client = client.clone();
+    let (camera_tx, mut camera_rx) = watch::channel(CameraInventory::default());
+    let _camera_worker = AbortTask(tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
+        loop {
+            interval.tick().await;
+            let inventory = camera_client
+                .cameras()
+                .await
+                .unwrap_or_else(|error| CameraInventory {
+                    devices: vec![],
+                    warnings: vec![format!("Camera discovery: {error:#}")],
+                });
+            if camera_tx.send(inventory).is_err() {
+                break;
+            }
+        }
+    }));
     let _worker = AbortTask(tokio::spawn(network(client, request_rx, view_tx)));
     let mut input = EventStream::new();
     let mut ui = Ui::default();
@@ -105,7 +128,12 @@ pub async fn run(client: Client) -> Result<()> {
             _ = &mut shutdown => break,
             result = view_rx.changed() => {
                 if result.is_err() { break; }
+                let inventory = std::mem::take(&mut view.inventory);
                 view = view_rx.borrow_and_update().clone();
+                view.inventory = inventory;
+            }
+            result = camera_rx.changed() => {
+                if result.is_ok() { view.inventory = camera_rx.borrow_and_update().clone(); }
             }
             event = input.next() => match event {
                 Some(Ok(Event::Key(key))) if key.kind == KeyEventKind::Press => {
@@ -140,9 +168,19 @@ fn handle_mouse(
             Some(MouseAction::Key(KeyCode::Char('q'))) => return true,
             Some(MouseAction::Key(key)) => Some(key),
             Some(MouseAction::CameraField(camera, field)) => {
-                ui.selected = CONFIG_FIELDS.len() + camera;
+                ui.selected = CAMERA_START + camera;
                 ui.camera_field = field;
                 Some(KeyCode::Enter)
+            }
+            Some(MouseAction::Dart(index)) => {
+                ui.selected = CONFIG_FIELDS.len() + index;
+                Some(KeyCode::Enter)
+            }
+            Some(MouseAction::Choice(index)) => {
+                if let Some(editor) = &mut ui.editor {
+                    editor.value = editor.choices[index].clone();
+                }
+                None
             }
             Some(MouseAction::Config(index)) => {
                 ui.selected = index;
@@ -239,15 +277,27 @@ fn handle_key(ui: &mut Ui, view: &View, key: KeyEvent, tx: &mpsc::Sender<Request
                     return;
                 }
                 let editor = ui.editor.take().unwrap();
-                send(
-                    ui,
-                    tx,
+                let request = if let Some(Command::CorrectThrow {
+                    dart,
+                    expected_revision,
+                    expected_session_id,
+                    ..
+                }) = editor.correction
+                {
+                    Request::Command(Command::CorrectThrow {
+                        dart,
+                        label: editor.value,
+                        expected_revision,
+                        expected_session_id,
+                    })
+                } else {
                     Request::Configure(ConfigChange {
                         key: editor.key,
                         value: editor.value,
                         expected_revision: Some(editor.revision),
-                    }),
-                );
+                    })
+                };
+                send(ui, tx, request);
             }
             KeyCode::Left | KeyCode::Up | KeyCode::Right | KeyCode::Down
                 if !editor.choices.is_empty() =>
@@ -330,7 +380,7 @@ fn handle_key(ui: &mut Ui, view: &View, key: KeyEvent, tx: &mpsc::Sender<Request
     if view.error.is_some() {
         return;
     }
-    let count = CONFIG_FIELDS.len() + snapshot.config.cameras.len();
+    let count = CAMERA_START + snapshot.config.cameras.len();
     ui.selected = ui.selected.min(count.saturating_sub(1));
     match key.code {
         KeyCode::Up if ui.tab == 0 => {
@@ -341,20 +391,55 @@ fn handle_key(ui: &mut Ui, view: &View, key: KeyEvent, tx: &mpsc::Sender<Request
             ui.selected = (ui.selected + 1) % count;
             ui.follow_selection = true;
         }
-        KeyCode::Left if ui.tab == 0 && ui.selected >= CONFIG_FIELDS.len() => {
+        KeyCode::Left if ui.tab == 0 && ui.selected >= CAMERA_START => {
             ui.camera_field = (ui.camera_field + CAMERA_FIELDS.len() - 1) % CAMERA_FIELDS.len()
         }
-        KeyCode::Right if ui.tab == 0 && ui.selected >= CONFIG_FIELDS.len() => {
+        KeyCode::Right if ui.tab == 0 && ui.selected >= CAMERA_START => {
             ui.camera_field = (ui.camera_field + 1) % CAMERA_FIELDS.len()
         }
         KeyCode::Enter if ui.tab == 0 => {
-            let (key, value, choices) = editable(snapshot, ui);
-            ui.editor = Some(Editor {
-                key,
-                value,
-                choices,
-                revision: snapshot.revision,
-            });
+            if (CONFIG_FIELDS.len()..CAMERA_START).contains(&ui.selected) {
+                let index = ui.selected - CONFIG_FIELDS.len();
+                let Some(dart) = snapshot.throws.get(index) else {
+                    ui.notice = "No throw to correct in this slot".into();
+                    return;
+                };
+                ui.editor = Some(Editor {
+                    key: format!("Dart {} — S1–S20, D1–D20, T1–T20, SB, DB, MISS", index + 1),
+                    value: dart.label.clone(),
+                    choices: vec![],
+                    revision: snapshot.revision,
+                    correction: Some(Command::CorrectThrow {
+                        dart: index as u8 + 1,
+                        label: dart.label.clone(),
+                        expected_revision: snapshot.revision,
+                        expected_session_id: snapshot.session_id,
+                    }),
+                });
+                return;
+            }
+            if ui.selected >= CAMERA_START && ui.camera_field == 4 {
+                send(
+                    ui,
+                    tx,
+                    Request::Command(Command::Calibrate {
+                        camera: Some((ui.selected - CAMERA_START + 1) as u8),
+                    }),
+                );
+                return;
+            }
+            match editable(snapshot, ui, &view.inventory) {
+                Ok((key, value, choices)) => {
+                    ui.editor = Some(Editor {
+                        key,
+                        value,
+                        choices,
+                        revision: snapshot.revision,
+                        correction: None,
+                    })
+                }
+                Err(message) => ui.notice = message,
+            }
         }
         KeyCode::Char('+') | KeyCode::Char('-') if ui.tab == 0 => {
             let count = snapshot.config.cameras.len();
@@ -373,6 +458,7 @@ fn handle_key(ui: &mut Ui, view: &View, key: KeyEvent, tx: &mpsc::Sender<Request
                 value: next.to_string(),
                 choices: vec!["1".into(), "2".into(), "3".into(), "4".into()],
                 revision: snapshot.revision,
+                correction: None,
             });
         }
         KeyCode::Char('s') => send(ui, tx, Request::Command(Command::Start)),
@@ -395,28 +481,80 @@ fn handle_key(ui: &mut Ui, view: &View, key: KeyEvent, tx: &mpsc::Sender<Request
     }
 }
 
-fn editable(snapshot: &Snapshot, ui: &Ui) -> (String, String, Vec<String>) {
+fn editable(
+    snapshot: &Snapshot,
+    ui: &Ui,
+    inventory: &CameraInventory,
+) -> Result<(String, String, Vec<String>), String> {
     let c = &snapshot.config;
-    if ui.selected >= CONFIG_FIELDS.len() {
-        let camera = &c.cameras[ui.selected - CONFIG_FIELDS.len()];
+    if ui.selected >= CAMERA_START {
+        let camera = &c.cameras[ui.selected - CAMERA_START];
         let field = CAMERA_FIELDS[ui.camera_field];
-        let value = match field {
+        let device = inventory
+            .devices
+            .iter()
+            .find(|device| device.matches(&camera.device));
+        let mut choices: Vec<String> = match field {
+            "device" => std::iter::once(String::new())
+                .chain(
+                    inventory
+                        .devices
+                        .iter()
+                        .filter(|device| {
+                            !c.cameras.iter().any(|other| {
+                                other.slot != camera.slot && device.matches(&other.device)
+                            })
+                        })
+                        .map(|device| device.path.clone()),
+                )
+                .collect(),
+            "resolution" => device
+                .map(|d| {
+                    d.modes
+                        .iter()
+                        .filter(|m| m.width <= 8192 && m.height <= 8192)
+                        .map(|m| format!("{}x{}", m.width, m.height))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            "fps" => device
+                .map(|d| {
+                    d.modes
+                        .iter()
+                        .filter(|m| m.width == camera.width && m.height == camera.height)
+                        .flat_map(|m| m.fps.iter().map(u32::to_string))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            "rotation" => vec!["0".into(), "90".into(), "180".into(), "270".into()],
+            _ => vec![],
+        };
+        if matches!(field, "fps" | "rotation") {
+            choices.sort_by_key(|value| value.parse::<u32>().unwrap_or(0));
+        } else {
+            choices.sort();
+        }
+        choices.dedup();
+        if choices.is_empty()
+            || (field == "device" && choices.len() == 1 && camera.device.is_empty())
+        {
+            return Err(device
+                .and_then(|d| d.error.clone())
+                .or_else(|| inventory.warnings.first().cloned())
+                .unwrap_or_else(|| format!("No available {field} choices reported by the board")));
+        }
+        let current = match field {
             "device" => camera.device.clone(),
-            "width" => camera.width.to_string(),
-            "height" => camera.height.to_string(),
+            "resolution" => format!("{}x{}", camera.width, camera.height),
             "fps" => camera.fps.to_string(),
             _ => camera.rotation.to_string(),
         };
-        let choices = if field == "rotation" {
-            vec!["0", "90", "180", "270"]
+        let value = if choices.contains(&current) {
+            current
         } else {
-            vec![]
+            choices[0].clone()
         };
-        return (
-            format!("cameras.{}.{}", camera.slot, field),
-            value,
-            choices.into_iter().map(str::to_string).collect(),
-        );
+        return Ok((format!("cameras.{}.{}", camera.slot, field), value, choices));
     }
     let key = CONFIG_FIELDS[ui.selected];
     let value = config_value(snapshot, key);
@@ -431,7 +569,7 @@ fn editable(snapshot: &Snapshot, ui: &Ui) -> (String, String, Vec<String>) {
         "cameras.count" => [1, 2, 3, 4].map(|v| v.to_string()).to_vec(),
         _ => vec![],
     };
-    (key.into(), value, choices)
+    Ok((key.into(), value, choices))
 }
 
 fn config_value(s: &Snapshot, key: &str) -> String {
@@ -452,7 +590,7 @@ fn plain(text: &str) -> String {
         .collect()
 }
 
-fn render(frame: &mut Frame, ui: &mut Ui, view: &View, endpoint: &str) -> Vec<Hit> {
+fn render(frame: &mut Frame, ui: &mut Ui, view: &View, _endpoint: &str) -> Vec<Hit> {
     let mut hits = Vec::new();
     let area = frame.area();
     if area.width < 60 || area.height < 20 {
@@ -464,31 +602,17 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, endpoint: &str) -> Vec<Hi
         return hits;
     }
     let sections = Layout::vertical([
-        Constraint::Length(3),
+        Constraint::Length(0),
         Constraint::Length(1),
         Constraint::Min(3),
-        Constraint::Length(4),
+        Constraint::Length(if ui.notice.is_empty() && view.feedback.is_empty() {
+            0
+        } else {
+            2
+        }),
     ])
     .split(area);
     let connected = view.snapshot.is_some() && view.error.is_none();
-    frame.render_widget(
-        Paragraph::new(format!(
-            "OcheCore  ·  {}  ·  {}",
-            if connected {
-                "CONNECTED"
-            } else {
-                "CONNECTING / OFFLINE"
-            },
-            endpoint
-        ))
-        .style(Style::default().fg(if connected {
-            Color::Cyan
-        } else {
-            Color::Yellow
-        }))
-        .block(Block::default().borders(Borders::ALL)),
-        sections[0],
-    );
     let tabs = sections[1];
     let mut x = tabs.x;
     for (index, label) in TABS.iter().enumerate() {
@@ -516,6 +640,7 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, endpoint: &str) -> Vec<Hi
     let mut camera_rows = Vec::new();
     let mut selected_row = 0;
     let mut camera_heading = None;
+    let mut darts_row = None;
     if let Some(error) = &view.error {
         lines.push(Line::raw("OFFLINE — last known state; controls disabled"));
         lines.push(Line::raw(plain(error)));
@@ -559,25 +684,7 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, endpoint: &str) -> Vec<Hi
             "Full live JSON: oche-core events --json (use this board's host/port)",
         ));
     } else if let Some(s) = &view.snapshot {
-        ui.selected = ui
-            .selected
-            .min(CONFIG_FIELDS.len() + s.config.cameras.len() - 1);
-        lines.push(Line::styled(
-            format!(
-                "{} · {:?} · {:?}",
-                plain(&s.config.board.name),
-                s.state,
-                s.mode
-            ),
-            selection(true),
-        ));
-        lines.push(Line::raw(format!("DARTS  {}", visit(s))));
-        lines.push(Line::raw(format!(
-            "Scene: {:?} · Physical: {:?} · Uptime: {}s",
-            s.scene,
-            s.physical_darts,
-            s.uptime_ms / 1000
-        )));
+        ui.selected = ui.selected.min(CAMERA_START + s.config.cameras.len() - 1);
         lines.push(Line::styled("BOARD & DETECTION SETTINGS", selection(true)));
         for (index, key) in CONFIG_FIELDS.iter().enumerate() {
             if ui.selected == index {
@@ -594,58 +701,23 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, endpoint: &str) -> Vec<Hi
                 selection(ui.selected == index),
             ));
         }
+        lines.push(Line::styled("DARTS", selection(true)));
+        darts_row = Some(lines.len());
+        if (CONFIG_FIELDS.len()..CAMERA_START).contains(&ui.selected) {
+            selected_row = lines.len();
+        }
+        lines.push(Line::raw(""));
         camera_heading = Some(lines.len());
         lines.push(Line::styled("CAMERAS", selection(true)));
-        for (index, c) in s.config.cameras.iter().enumerate() {
-            if ui.selected == CONFIG_FIELDS.len() + index {
-                selected_row = lines.len() + 1;
+        for (index, _) in s.config.cameras.iter().enumerate() {
+            if ui.selected == CAMERA_START + index {
+                selected_row = lines.len();
             }
-            row_hits.push((lines.len(), MouseAction::CameraField(index, 0)));
-            lines.push(Line::styled(
-                format!(
-                    "{} Camera {} · Device: {}",
-                    if ui.selected == CONFIG_FIELDS.len() + index {
-                        "›"
-                    } else {
-                        " "
-                    },
-                    c.slot,
-                    if c.device.is_empty() {
-                        "unassigned (click to set)".into()
-                    } else {
-                        plain(&c.device)
-                    }
-                ),
-                selection(ui.selected == CONFIG_FIELDS.len() + index),
-            ));
             camera_rows.push((lines.len(), index));
             lines.push(Line::raw(""));
-        }
-        lines.push(Line::raw(
-            "Capture / calibration / vision unavailable; modes are requested.",
-        ));
-        lines.push(Line::raw(
-            "Speed: future detector. Standby: seconds (0 = off).",
-        ));
-        lines.push(Line::raw(
-            "Reducing camera count removes the highest slots' settings.",
-        ));
-        lines.push(Line::raw(if s.restart_required {
-            "RESTART REQUIRED: saved listen address/port changed."
-        } else {
-            "Listen address/port changes require restart."
-        }));
-        lines.push(Line::raw(format!("Board ID: {}", s.config.board.id)));
-        lines.push(Line::raw(
-            "Arrows: select field · Enter: edit · +/-: cameras · ? help",
-        ));
-        lines.push(Line::raw(
-            "PgUp/PgDn, Home/End or wheel: scroll · Tab: events",
-        ));
-        if s.mode == Mode::Demo {
-            lines.push(Line::raw(
-                "DEMO: t adds synthetic T20; o completes takeout.",
-            ));
+            if content.width < 100 {
+                lines.push(Line::raw(""));
+            }
         }
     } else if view.error.is_none() {
         lines.push(Line::raw("Connecting to the native control service…"));
@@ -700,17 +772,107 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, endpoint: &str) -> Vec<Hi
             );
         }
     }
+    if let Some(y) = darts_row.and_then(visible_y) {
+        let snapshot = view.snapshot.as_ref().unwrap();
+        let width = (content.width / 3).min(22);
+        for index in 0..3 {
+            let label = snapshot
+                .throws
+                .get(index)
+                .map(|d| {
+                    format!(
+                        "{}: {}{}",
+                        index + 1,
+                        d.label,
+                        if d.corrected { " *" } else { "" }
+                    )
+                })
+                .unwrap_or_else(|| format!("{}: —", index + 1));
+            button(
+                frame,
+                &mut hits,
+                Rect::new(
+                    content.x + index as u16 * width,
+                    y,
+                    width.saturating_sub(1),
+                    1,
+                ),
+                &label,
+                MouseAction::Dart(index),
+                connected && index < snapshot.throws.len(),
+                ui.selected == CONFIG_FIELDS.len() + index,
+            );
+        }
+    }
     for (row, index) in camera_rows {
+        let snapshot = view.snapshot.as_ref().unwrap();
+        let c = &snapshot.config.cameras[index];
         if let Some(y) = visible_y(row) {
-            let c = &view.snapshot.as_ref().unwrap().config.cameras[index];
-            let mut x = content.x + 2;
+            frame.render_widget(
+                Paragraph::new(format!("Camera {}", c.slot)),
+                Rect::new(content.x, y, 9, 1),
+            );
+            let label = view
+                .inventory
+                .devices
+                .iter()
+                .find(|d| d.matches(&c.device))
+                .map(|d| {
+                    format!(
+                        "{} {}",
+                        d.aliases
+                            .first()
+                            .unwrap_or(&d.path)
+                            .rsplit('/')
+                            .next()
+                            .unwrap_or(""),
+                        d.name
+                    )
+                })
+                .unwrap_or_else(|| {
+                    if c.device.is_empty() {
+                        "Select camera".into()
+                    } else {
+                        c.device.clone()
+                    }
+                });
+            let device_width = if content.width >= 100 {
+                26
+            } else {
+                content.width.saturating_sub(30).min(35)
+            };
+            button(
+                frame,
+                &mut hits,
+                Rect::new(content.x + 10, y, device_width, 1),
+                &format!("{} v", plain(&label)),
+                MouseAction::CameraField(index, 0),
+                connected,
+                ui.selected == CAMERA_START + index && ui.camera_field == 0,
+            );
+            button(
+                frame,
+                &mut hits,
+                Rect::new(content.x + 11 + device_width, y, 17, 1),
+                "Calibrate (N/A)",
+                MouseAction::CameraField(index, 4),
+                connected,
+                false,
+            );
+        }
+        let (parameter_row, offset) = if content.width >= 100 {
+            (row, 55)
+        } else {
+            (row + 1, 10)
+        };
+        if let Some(y) = visible_y(parameter_row) {
+            let mut x = content.x + offset;
             for (field, label) in [
-                (1, format!("W {}", c.width)),
-                (2, format!("H {}", c.height)),
-                (3, format!("FPS {}", c.fps)),
-                (4, format!("Rotate {}", c.rotation)),
+                (1, format!("{}x{} v", c.width, c.height)),
+                (2, format!("{} FPS v", c.fps)),
+                (3, format!("{}° v", c.rotation)),
             ] {
-                let width = label.len() as u16 + 2;
+                let width = label.chars().count() as u16 + 2;
                 button(
                     frame,
                     &mut hits,
@@ -718,49 +880,34 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, endpoint: &str) -> Vec<Hi
                     &label,
                     MouseAction::CameraField(index, field),
                     connected,
-                    ui.selected == CONFIG_FIELDS.len() + index && ui.camera_field == field,
+                    ui.selected == CAMERA_START + index && ui.camera_field == field,
                 );
                 x += width + 1;
             }
         }
     }
+    // Show only feedback, not a permanent control/help panel.
     frame.render_widget(
         Paragraph::new(vec![
-            Line::raw(""),
             Line::raw(plain(&view.feedback)),
             Line::raw(plain(&ui.notice)),
-        ])
-        .block(Block::default().borders(Borders::TOP)),
+        ]),
         sections[3],
     );
-    let mut x = sections[3].x + 1;
-    for (label, key) in [
-        ("s Start", 's'),
-        ("x Stop", 'x'),
-        ("r Reset", 'r'),
-        ("w Wake", 'w'),
-        ("q Quit", 'q'),
-    ] {
-        let rect = Rect::new(x, sections[3].y + 1, label.len() as u16 + 2, 1);
-        button(
-            frame,
-            &mut hits,
-            rect,
-            label,
-            MouseAction::Key(KeyCode::Char(key)),
-            connected || key == 'q',
-            false,
-        );
-        x = rect.right() + 1;
-    }
     if let Some(editor) = &ui.editor {
         hits.clear();
         let width = area.width.saturating_sub(4).min(80);
+        let list_height = if editor.choices.is_empty() {
+            0
+        } else {
+            editor.choices.len().min(6) as u16
+        };
+        let popup_height = 7 + list_height;
         let popup = Rect::new(
             (area.width - width) / 2,
-            area.height.saturating_sub(7) / 2,
+            area.height.saturating_sub(popup_height) / 2,
             width,
-            7,
+            popup_height,
         );
         frame.render_widget(Clear, popup);
         frame.render_widget(
@@ -785,6 +932,41 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, endpoint: &str) -> Vec<Hi
             ),
             popup,
         );
+        if list_height > 0 {
+            let selected = editor
+                .choices
+                .iter()
+                .position(|choice| choice == &editor.value)
+                .unwrap_or(0);
+            let first = selected.saturating_sub(list_height as usize - 1);
+            for (row, index) in (first..editor.choices.len())
+                .take(list_height as usize)
+                .enumerate()
+            {
+                let value = &editor.choices[index];
+                let label = if value.is_empty() {
+                    "Unassigned".into()
+                } else if editor.key.ends_with(".device") {
+                    view.inventory
+                        .devices
+                        .iter()
+                        .find(|d| d.path == *value)
+                        .map(|d| format!("{} · {}", d.aliases.first().unwrap_or(&d.path), d.name))
+                        .unwrap_or_else(|| value.clone())
+                } else {
+                    value.clone()
+                };
+                button(
+                    frame,
+                    &mut hits,
+                    Rect::new(popup.x + 2, popup.y + 5 + row as u16, popup.width - 4, 1),
+                    &plain(&label),
+                    MouseAction::Choice(index),
+                    true,
+                    selected == index,
+                );
+            }
+        }
         let mut x = popup.x + 2;
         let controls: &[(&str, KeyCode)] = if editor.choices.is_empty() {
             &[("Save", KeyCode::Enter), ("Cancel", KeyCode::Esc)]
@@ -797,7 +979,7 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, endpoint: &str) -> Vec<Hi
             ]
         };
         for (label, key) in controls {
-            let rect = Rect::new(x, popup.y + 5, label.len() as u16 + 2, 1);
+            let rect = Rect::new(x, popup.y + 5 + list_height, label.len() as u16 + 2, 1);
             button(
                 frame,
                 &mut hits,
@@ -934,10 +1116,74 @@ mod tests {
             "server.port",
             "Camera 1",
             "+ Add",
-            "FPS 30",
+            "30 FPS",
         ] {
             assert!(text.contains(label), "missing {label}");
         }
+    }
+
+    #[test]
+    fn camera_dropdowns_use_only_matching_reported_modes() {
+        let mut view = view(2);
+        // Synthetic enumeration fixture, not evidence of a physical camera.
+        view.inventory.devices.push(oche_domain::CameraDevice {
+            path: "/dev/v4l/by-path/test".into(),
+            aliases: vec!["/dev/video0".into()],
+            name: "Fixture camera".into(),
+            modes: vec![
+                oche_domain::CameraMode {
+                    width: 1280,
+                    height: 720,
+                    pixel_format: "MJPG".into(),
+                    fps: vec![30, 60],
+                },
+                oche_domain::CameraMode {
+                    width: 1920,
+                    height: 1080,
+                    pixel_format: "MJPG".into(),
+                    fps: vec![15],
+                },
+            ],
+            error: None,
+        });
+        view.snapshot.as_mut().unwrap().config.cameras[0].device = "/dev/video0".into();
+        let mut ui = Ui {
+            selected: CAMERA_START,
+            camera_field: 1,
+            ..Ui::default()
+        };
+        let (_, _, choices) =
+            editable(view.snapshot.as_ref().unwrap(), &ui, &view.inventory).unwrap();
+        assert_eq!(choices, ["1280x720", "1920x1080"]);
+        ui.camera_field = 2;
+        let (_, _, choices) =
+            editable(view.snapshot.as_ref().unwrap(), &ui, &view.inventory).unwrap();
+        assert_eq!(choices, ["30", "60"]);
+        ui.selected = CAMERA_START + 1;
+        ui.camera_field = 0;
+        assert!(editable(view.snapshot.as_ref().unwrap(), &ui, &view.inventory).is_err());
+        ui.selected = CAMERA_START;
+        ui.camera_field = 1;
+        let (tx, mut rx) = mpsc::channel(8);
+        key(&mut ui, &view, KeyCode::Enter, &tx);
+        click(&mut ui, &view, MouseAction::Choice(1), &tx);
+        click(&mut ui, &view, MouseAction::Key(KeyCode::Enter), &tx);
+        let Request::Configure(change) = rx.try_recv().unwrap() else {
+            panic!("expected config");
+        };
+        assert_eq!(change.key, "cameras.1.resolution");
+        assert_eq!(change.value, "1920x1080");
+        let next = view
+            .snapshot
+            .as_ref()
+            .unwrap()
+            .config
+            .changed(&change)
+            .unwrap();
+        assert_eq!(
+            (next.cameras[0].width, next.cameras[0].height),
+            (1920, 1080)
+        );
     }
 
     #[test]
@@ -980,13 +1226,13 @@ mod tests {
         let view = view(4);
         let mut ui = Ui::default();
         let (tx, mut rx) = mpsc::channel(8);
-        for _ in 0..9 {
+        for _ in 0..12 {
             key(&mut ui, &view, KeyCode::Down, &tx);
         }
         let (_, text) = draw(&mut ui, &view, 80, 24);
         assert!(text.contains("Camera 4"));
-        assert!(ui.scroll > 0);
-        click(&mut ui, &view, MouseAction::CameraField(3, 4), &tx);
+
+        click(&mut ui, &view, MouseAction::CameraField(3, 3), &tx);
         assert_eq!(ui.editor.as_ref().unwrap().key, "cameras.4.rotation");
         key(&mut ui, &view, KeyCode::Right, &tx);
         key(&mut ui, &view, KeyCode::Enter, &tx);
@@ -1059,7 +1305,7 @@ mod tests {
         };
         for (width, height) in [(110, 30), (60, 20), (40, 12)] {
             let (hits, text) = draw(&mut Ui::default(), &view, width, height);
-            assert!(text.contains("OcheCore"));
+            assert!(text.contains(if width < 60 { "OcheCore" } else { "Board" }));
             if width == 110 {
                 assert!(text.contains("oche-core run"));
             }

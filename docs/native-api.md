@@ -7,6 +7,7 @@ expose it only on a trusted network or behind appropriate access controls.
 | Method | Path | Behavior |
 | --- | --- | --- |
 | GET | `/api/v1/status` | Complete current snapshot |
+| GET | `/api/v1/cameras/available` | Query devices/modes on the daemon host |
 | GET | `/api/v1/config` | Current persisted configuration |
 | PUT | `/api/v1/config` | Validate, atomically save, and apply one setting |
 | POST | `/api/v1/command` | Run a serialized control command |
@@ -18,6 +19,24 @@ Commands use JSON, for example `{"command":"start"}`. Available commands:
 `demo_takeout` with integer `remaining`. `calibrate` with optional `camera` returns
 HTTP 501 until that backend exists. Demo commands require `run --demo`. Success
 returns the resulting snapshot.
+
+`correct_throw` requires `dart` (1–3), `label`, `expected_revision`, and
+`expected_session_id` from a current snapshot. Only existing throws can be
+corrected. It preserves occupancy, scene, and `synthetic`, sets `corrected: true`,
+and emits `throw_corrected`; stale edits or invalid labels are rejected.
+
+`cameras.<slot>.resolution` accepts `WIDTHxHEIGHT` as an atomic config change.
+Discovery returns `devices` (preferred path, aliases, name, modes, optional error)
+and warnings. Each mode has pixel format, width, height, and integer FPS choices.
+UI choices aggregate modes across formats; actual capture negotiation is deferred.
+Discovery does not configure devices or claim capture/calibration capability.
+
+Queries use a separate single-worker permit and five-second cache, never the
+command lock. Scans limit work to 32 nodes, 16 formats, 64 sizes, 32 intervals,
+and 256 modes per node, with a two-second budget between ioctls. A stuck driver
+can hold that discovery permit, but does not hold the command authority. Ranged
+modes and fractional FPS are reported as limitations. Per-device errors and
+partial results remain explicit.
 
 Configuration changes use:
 
@@ -43,7 +62,7 @@ SSE events have an event name, ID `<session UUID>:<sequence>`, and a single JSON
 is always `snapshot`. Subscription and snapshot are atomic with respect to commands.
 
 Mutation events: `started`, `stopped`, `visit_reset`, `throw_accepted`,
-`partial_takeout`, `takeout_completed`, `config_changed`, `standby`. Repeated
+`partial_takeout`, `takeout_completed`, `throw_corrected`, `config_changed`, `standby`. Repeated
 start/stop requests that do not change state do not duplicate transition events.
 Start/wake keeps the service awake; status reads and configuration edits do not.
 
