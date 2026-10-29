@@ -6,7 +6,8 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use oche_calibration::Pixel;
-use oche_calibration::detect::{Detection, detect};
+use oche_calibration::detect::detect;
+use oche_calibration::{Homography, refine};
 use oche_domain::board::{BoardDimensions, BoardPoint};
 use oche_replay::{darts, open_session, png};
 use oche_vision::image::RgbImage;
@@ -15,10 +16,23 @@ const WIRE: [u8; 3] = [255, 230, 0];
 const ANCHOR: [u8; 3] = [0, 255, 255];
 const TWENTY: [u8; 3] = [255, 0, 255];
 
-/// Draws the fitted board model over the frame: rings and radial wires in
-/// yellow, detected anchors in cyan, and a magenta dot in the middle of S20.
-fn overlay(mut image: RgbImage, detection: &Detection, board: &BoardDimensions) -> RgbImage {
-    let mapping = &detection.fit.homography;
+/// Draws the measured board model over the frame: wire centres in yellow,
+/// the wire points used by the fit in cyan, and a magenta dot in the middle
+/// of S20.
+fn overlay(
+    mut image: RgbImage,
+    mapping: &Homography,
+    refinement: &refine::Refinement,
+    view: usize,
+    board: &BoardDimensions,
+) -> RgbImage {
+    for point in refinement.points.iter().filter(|p| p.view == view) {
+        image.set(
+            point.pixel.x.round() as i64,
+            point.pixel.y.round() as i64,
+            ANCHOR,
+        );
+    }
     let mut plot = |point: BoardPoint, colour: [u8; 3]| {
         if let Some(p) = mapping.to_image(point) {
             image.set(p.x.round() as i64, p.y.round() as i64, colour);
@@ -48,13 +62,6 @@ fn overlay(mut image: RgbImage, detection: &Detection, board: &BoardDimensions) 
                     TWENTY,
                 );
             }
-        }
-    }
-    for anchor in &detection.anchors {
-        let p = anchor.correspondence.image;
-        for d in -3..=3 {
-            image.set(p.x.round() as i64 + d, p.y.round() as i64, ANCHOR);
-            image.set(p.x.round() as i64, p.y.round() as i64 + d, ANCHOR);
         }
     }
     image
@@ -174,51 +181,101 @@ fn main() -> Result<()> {
             out,
         } => {
             fs::create_dir_all(&out)?;
-            let board = BoardDimensions::wdf();
-            let mut report = Vec::new();
+            let nominal = BoardDimensions::wdf();
+            let mut detected = Vec::new();
             for (camera, (x, y)) in hints {
                 let image = decode(&session, camera, seq)?;
-                match detect(&image, Pixel::new(x, y), &board) {
+                match detect(&image, Pixel::new(x, y), &nominal) {
                     Ok(detection) => {
                         let fit = &detection.fit.residuals;
-                        let holdout = &detection.treble_holdout;
                         println!(
-                            "cam{camera}: {} anchors, fit rms {:.2} mm max {:.2} mm; \
-                             treble holdout rms {:.2} mm max {:.2} mm",
+                            "cam{camera}: colour detection {} anchors, fit rms {:.2} mm",
                             detection.anchors.len(),
-                            fit.rms_mm,
-                            fit.max_mm,
-                            holdout.rms_mm,
-                            holdout.max_mm
+                            fit.rms_mm
                         );
-                        let path = out.join(format!("cam{camera}-overlay.png"));
-                        fs::write(&path, png::encode(&overlay(image, &detection, &board)))?;
-                        println!("  {}", path.display());
-                        report.push(serde_json::json!({
-                            "camera": camera,
-                            "centre": [detection.centre.x, detection.centre.y],
-                            "homography": detection.fit.homography,
-                            "fit_rms_mm": fit.rms_mm,
-                            "fit_max_mm": fit.max_mm,
-                            "treble_holdout_rms_mm": holdout.rms_mm,
-                            "treble_holdout_max_mm": holdout.max_mm,
-                            "anchors": detection.anchors.iter().zip(&fit.per_point_mm).map(|(a, r)| serde_json::json!({
-                                "name": a.name,
-                                "image": [a.correspondence.image.x, a.correspondence.image.y],
-                                "board": [a.correspondence.board.x, a.correspondence.board.y],
-                                "residual_mm": r,
-                                "mapped_radius_mm": detection.fit.homography.to_board(a.correspondence.image).map(|m| m.radius()),
-                            })).collect::<Vec<_>>(),
-                        }));
+                        detected.push((camera, image, detection));
                     }
-                    Err(error) => {
-                        println!("cam{camera}: {error}");
-                        report.push(
-                            serde_json::json!({"camera": camera, "error": error.to_string()}),
-                        );
-                    }
+                    Err(error) => println!("cam{camera}: colour detection failed: {error}"),
                 }
             }
+            anyhow::ensure!(!detected.is_empty(), "no camera could be detected");
+
+            // Measure the board's wire radii and refine every camera together,
+            // then each camera alone as a consistency check on the radii.
+            let grays: Vec<_> = detected.iter().map(|(_, image, _)| image.luma()).collect();
+            let views: Vec<_> = grays
+                .iter()
+                .zip(&detected)
+                .map(|(gray, (_, _, d))| (gray, d.fit.homography))
+                .collect();
+            let settings = refine::Settings::default();
+            let joint = refine::refine(&views, &nominal, &settings).map_err(anyhow::Error::msg)?;
+            let format_radii = |radii: [f64; 6]| {
+                radii
+                    .iter()
+                    .map(|r| format!("{r:7.2}"))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            };
+            println!(
+                "ring radii (mm):    {}",
+                refine::RINGS
+                    .map(|n| format!("{:>7}", &n[..n.len().min(7)]))
+                    .join(" ")
+            );
+            println!("  WDF nominal       {}", format_radii(nominal.radii()));
+            println!("  measured, joint   {}", format_radii(joint.board.radii()));
+            let mut singles = Vec::new();
+            for (i, (camera, _, _)) in detected.iter().enumerate() {
+                match refine::refine(&views[i..i + 1], &nominal, &settings) {
+                    Ok(single) => {
+                        println!(
+                            "  cam{camera} alone       {}",
+                            format_radii(single.board.radii())
+                        );
+                        singles.push(serde_json::json!({"camera": camera, "board": single.board}));
+                    }
+                    Err(error) => println!("  cam{camera} alone: {error}"),
+                }
+            }
+            let mut cameras = Vec::new();
+            for (i, (camera, image, detection)) in detected.into_iter().enumerate() {
+                let fit = &joint.views[i];
+                println!(
+                    "cam{camera}: wire rms by ring {} mm ({} points); radial rms {:.2} mm ({} points)",
+                    fit.ring_rms_mm
+                        .iter()
+                        .map(|r| format!("{r:.2}"))
+                        .collect::<Vec<_>>()
+                        .join("/"),
+                    fit.ring_points.iter().sum::<usize>(),
+                    fit.radial_rms_mm,
+                    fit.radial_points
+                );
+                let mapping = joint.homographies[i];
+                let path = out.join(format!("cam{camera}-overlay.png"));
+                fs::write(
+                    &path,
+                    png::encode(&overlay(image, &mapping, &joint, i, &joint.board)),
+                )?;
+                println!("  {}", path.display());
+                cameras.push(serde_json::json!({
+                    "camera": camera,
+                    "homography": mapping,
+                    "colour_homography": detection.fit.homography,
+                    "colour_fit_rms_mm": detection.fit.residuals.rms_mm,
+                    "wire_ring_rms_mm": fit.ring_rms_mm,
+                    "wire_ring_points": fit.ring_points,
+                    "wire_radial_rms_mm": fit.radial_rms_mm,
+                    "wire_radial_points": fit.radial_points,
+                }));
+            }
+            let report = serde_json::json!({
+                "board": joint.board,
+                "scale": format!("{} fixed at {} mm", refine::RINGS[settings.fixed_ring], nominal.radii()[settings.fixed_ring]),
+                "single_camera_boards": singles,
+                "cameras": cameras,
+            });
             let path = out.join("calibration.json");
             fs::write(&path, serde_json::to_vec_pretty(&report)?)?;
             println!("{}", path.display());
@@ -229,9 +286,14 @@ fn main() -> Result<()> {
             out,
         } => {
             fs::create_dir_all(&out)?;
-            let report: Vec<serde_json::Value> = serde_json::from_slice(&fs::read(&calibration)?)?;
+            let report: serde_json::Value = serde_json::from_slice(&fs::read(&calibration)?)?;
+            let board: BoardDimensions = serde_json::from_value(report["board"].clone())
+                .context("calibration report lacks a board")?;
             let mut homographies = std::collections::BTreeMap::new();
-            for entry in report {
+            for entry in report["cameras"]
+                .as_array()
+                .context("calibration report lacks cameras")?
+            {
                 if let (Some(camera), Some(h)) = (entry["camera"].as_u64(), entry.get("homography"))
                 {
                     homographies.insert(camera as u8, serde_json::from_value(h.clone())?);
@@ -284,7 +346,7 @@ fn main() -> Result<()> {
                 match &fused {
                     Ok(i) => println!(
                         "  impact {}; sigma {:.1}/{:.1} mm; cameras {:?} rejected {:?} checked {}",
-                        darts::describe(i.point),
+                        darts::describe(i.point, &board),
                         i.semi_axes_mm.0,
                         i.semi_axes_mm.1,
                         i.cameras,

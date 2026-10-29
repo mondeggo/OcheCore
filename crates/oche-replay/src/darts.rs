@@ -358,8 +358,8 @@ pub fn fuse(
     fuse_lines(&event.lines(), settings.limits)
 }
 
-pub fn describe(point: BoardPoint) -> String {
-    let hit = BoardDimensions::wdf().hit(point);
+pub fn describe(point: BoardPoint, board: &BoardDimensions) -> String {
+    let hit = board.hit(point);
     format!(
         "{} ({:.1}, {:.1}) mm, {:.1} mm from a wire",
         hit.label(),

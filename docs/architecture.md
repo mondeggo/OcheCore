@@ -92,6 +92,15 @@ and compatibility claims; it does not gate the native control foundation.
   half its nominal width on real frames. A pixel near the 20 resolves the
   two-segment colour symmetry. The centre is re-estimated from the fit until it
   moves less than 0.05 px. Thresholds come from one lighting setup.
+- **Board measurement (`oche-calibration::refine`):** colour-detected mappings
+  are refined against wire centres. Each view is resampled in board polar
+  coordinates; ring wires are found as bright luminance ridges beside black
+  singles, radial wires as ridges inside the coloured bands. A ridge peak is the
+  wire centre, so wire width does not bias the boundary. All views and the ring
+  radii are fitted together by Levenberg-Marquardt with outlier trimming; the
+  double's outer wire stays at 170 mm to fix scale. The measured radii replace
+  the WDF nominal values for scoring. Dart scoring and fusion use shaft centre
+  lines from slice edge midpoints, excluding the flight.
 - **JPEG decoding (`oche-vision::image`):** `zune-jpeg` 0.5.15 with `zune-core`
   0.5.3 (MIT OR Apache-2.0 OR Zlib), pure Rust. Its SIMD paths use `unsafe`
   for platform intrinsics inside the dependency; workspace crates remain

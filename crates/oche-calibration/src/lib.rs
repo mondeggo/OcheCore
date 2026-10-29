@@ -6,6 +6,7 @@
 //! residuals on real frames include it and must be checked before trusting a fit.
 
 pub mod detect;
+pub mod refine;
 
 use oche_domain::board::{BoardLine, BoardPoint};
 use serde::{Deserialize, Serialize};
@@ -151,6 +152,21 @@ impl Homography {
             homography,
             residuals,
         })
+    }
+
+    /// Builds a mapping from an image-to-board matrix; `None` if singular.
+    pub fn from_matrix(to_board: [[f64; 3]; 3]) -> Option<Self> {
+        if to_board.iter().flatten().any(|v| !v.is_finite()) {
+            return None;
+        }
+        Some(Self {
+            to_board,
+            to_image: invert(&to_board)?,
+        })
+    }
+
+    pub fn matrix(&self) -> [[f64; 3]; 3] {
+        self.to_board
     }
 
     pub fn to_board(&self, pixel: Pixel) -> Option<BoardPoint> {

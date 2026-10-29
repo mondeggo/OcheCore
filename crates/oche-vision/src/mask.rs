@@ -28,6 +28,22 @@ impl RgbImage {
 }
 
 impl GrayImage {
+    /// Bilinear sample; `None` unless all four neighbours are inside.
+    pub fn bilinear(&self, x: f64, y: f64) -> Option<f64> {
+        if !(x >= 0.0 && y >= 0.0) {
+            return None;
+        }
+        let (x0, y0) = (x.floor() as usize, y.floor() as usize);
+        if x0 + 1 >= self.width || y0 + 1 >= self.height {
+            return None;
+        }
+        let (fx, fy) = (x - x0 as f64, y - y0 as f64);
+        let at = |x: usize, y: usize| f64::from(self.data[y * self.width + x]);
+        let top = at(x0, y0) * (1.0 - fx) + at(x0 + 1, y0) * fx;
+        let bottom = at(x0, y0 + 1) * (1.0 - fx) + at(x0 + 1, y0 + 1) * fx;
+        Some(top * (1.0 - fy) + bottom * fy)
+    }
+
     /// Block average by an integer factor; trailing partial blocks are dropped.
     pub fn downsample(&self, factor: usize) -> Self {
         let (width, height) = (self.width / factor, self.height / factor);
@@ -341,6 +357,14 @@ mod tests {
         let mean = GrayImage::mean(&[&small, &dark]).unwrap();
         assert!(mean.data.iter().all(|v| v.abs_diff(100) <= 1));
         assert!(GrayImage::mean(&[&gray, &dark]).is_none());
+        let ramp = GrayImage {
+            width: 2,
+            height: 2,
+            data: vec![0, 100, 0, 100],
+        };
+        assert_eq!(ramp.bilinear(0.25, 0.5), Some(25.0));
+        assert_eq!(ramp.bilinear(1.0, 0.0), None);
+        assert_eq!(ramp.bilinear(-0.1, 0.0), None);
     }
 
     #[test]

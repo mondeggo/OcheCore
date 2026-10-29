@@ -204,7 +204,28 @@ Each 180 s three-camera session uses about 1.4 GB; uncompressed debug overlays
 add about 2.6 MB per image. Saving overlays filled the 15 GB SD card once, so
 keep recordings and debug output on larger external storage.
 
-- [ ] Measure the installed board's double and treble wire diameters.
+Board measured from `empty-calib-autowb` (2026-10-30, wire centres, double
+outer wire fixed at 170 mm, all three cameras fitted jointly; each camera alone
+agrees within about 0.1 mm):
+
+| Wire | WDF nominal | Measured |
+| --- | --- | --- |
+| Inner bull | 6.35 | 6.83 |
+| Outer bull | 15.90 | 16.34 |
+| Treble inner | 99.40 | 96.41 |
+| Treble outer | 107.40 | 106.15 |
+| Double inner | 162.00 | 160.35 |
+| Double outer | 170.00 | 170.00 (scale) |
+
+Wire-fit residuals are 0.2-0.3 mm RMS per camera (about 2000 ring and 540
+radial points each), against 1.2 mm for the colour-band fit. With the measured
+board and shaft-line fitting, all 12 results in `visit1-labelled` and all 18
+recorded darts in `visit2-heldout` match the labels, including the T3 that the
+nominal board scored as S3. Both sessions informed development, so these are no
+longer held-out results. Three-camera line agreement is 0.14 and 0.23 mm RMS.
+
+- [ ] Confirm the measured radii with a ruler (treble inner wire diameter
+  about 192.8 mm on this board).
 - [ ] Record more held-out labelled sessions, including grouped darts and
   partial takeout.
 - [ ] Record empty board, single throws, three-dart visits, grouped darts,
