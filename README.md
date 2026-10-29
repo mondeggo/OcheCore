@@ -63,8 +63,10 @@ daemon is missing, the UI explains how to start it and reconnects automatically.
 to accept each default: `My dartboard`, `127.0.0.1`, `5180`, and one camera slot.
 It creates `$XDG_CONFIG_HOME/ochecore/board.toml`, or
 `~/.config/ochecore/board.toml`. Without a config, `run` and the local default
-command ask you to run `init`; they do not silently create one. Use `--config FILE`
-for a separate board. Remote management does not require a local configuration. Board ID
+command ask you to run `init`; they do not silently create one.
+`run --init` explicitly enables setup followed by automatic startup (the Docker
+default). Use `--config FILE` for a separate board. Remote management does not
+require a local configuration. Board ID
 survives rename/restart; session ID changes on restart. A file lock prevents two
 daemons from owning one configuration.
 
@@ -221,7 +223,6 @@ Autodarts adapters.
 ```sh
 mkdir -p data
 export OCHECORE_UID=$(id -u) OCHECORE_GID=$(id -g)
-docker compose run --build --rm ochecore init --bind 0.0.0.0
 docker compose up --build -d
 docker compose exec ochecore oche-core remote
 docker compose exec ochecore oche-core status --json
@@ -229,8 +230,24 @@ docker compose down
 ```
 
 Compose mounts the host folder `./data` at `/data` and publishes port 5180 on loopback.
-Run the initialization command once for an empty data folder; append `--defaults`
-for unattended setup. Existing configurations do not need initialization again.
+On an empty data folder, the image explains that configuration is missing, runs
+setup, then starts the daemon automatically. Detached `docker compose up -d`
+creates default settings without waiting for input. With an interactive terminal,
+setup asks for the board name, listen address, port, and camera count:
+
+```sh
+docker compose run --build --service-ports --rm ochecore
+```
+
+That command continues running the daemon after the prompts; no second command
+is needed. Do not also start the normal Compose service at the same time.
+Existing configuration is reused without prompts or replacement. Invalid
+configuration still reports an error instead of resetting board identity.
+The image's default command is `run --init --init-bind 0.0.0.0`: the initial address
+allows container networking and is only used when creating configuration.
+Subsequent starts honor the saved address. Explicit `--bind` / `--port` remain
+runtime overrides. Keep container port 5180 unless you also update the mapping
+and healthcheck; `OCHECORE_PORT` changes only the published host port.
 Set `OCHECORE_DATA_DIR` to use another existing folder. The UID/GID variables above
 run the container as your host user so it can write to that folder; keep them set
 when running Compose, or save their numeric values in `.env`. Without overrides,
@@ -245,7 +262,6 @@ the version with the GitHub repository and release tag:
 
 ```sh
 export OCHECORE_IMAGE=ghcr.io/OWNER/REPOSITORY:vX.Y.Z
-docker compose run --rm ochecore init --bind 0.0.0.0
 docker compose up -d --no-build
 ```
 

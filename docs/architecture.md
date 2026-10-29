@@ -28,8 +28,11 @@ and compatibility claims; it does not gate the native control foundation.
   Native UUIDs do not predetermine a future compatibility adapter's representation.
 - **Explicit initialization:** `init` (also `config init`) collects validated
   settings before saving; `--defaults` enables unattended provisioning. `run`
-  requires an existing config. `config reset` uses the same exclusive lock and
-  atomic save, requires confirmation or `--yes`, and deliberately generates a
+  requires an existing config unless `--init` is specified. Docker enables this:
+  a TTY gets the wizard; detached startup saves defaults with an explanatory log,
+  then both paths start the daemon. `--init-bind` only seeds new configuration.
+  Existing or invalid files are never silently replaced. `config reset` uses
+  the same exclusive lock and atomic save, requires confirmation or `--yes`, and deliberately generates a
   new board ID. Cancelling or invalid input cannot partially replace settings.
 - **Explicit demo mode:** every throw is synthetic. Normal mode reports unknown
   occupancy and unavailable capture/calibration/vision. Camera modes are requested

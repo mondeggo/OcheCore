@@ -17,6 +17,34 @@ pub struct Options {
     name: Option<String>,
 }
 
+pub fn initialize_for_run(
+    path: &Path,
+    bind: Option<IpAddr>,
+    port: Option<u16>,
+    json: bool,
+) -> Result<()> {
+    let interactive = io::stdin().is_terminal() && io::stdout().is_terminal() && !json;
+    eprintln!(
+        "No configuration found at {}. Running initial setup before starting OcheCore.",
+        path.display()
+    );
+    if !interactive {
+        eprintln!(
+            "No interactive terminal: saving default settings. Use docker run -it (or docker compose run --service-ports --rm ochecore) for prompted first-run setup."
+        );
+    }
+    let options = Options {
+        defaults: !interactive,
+        name: None,
+    };
+    let config = initialize(path, &options, false, false, bind, port, json)?;
+    eprintln!(
+        "Configuration saved: {} · {}:{} · board ID {}. Starting the daemon now.",
+        config.board.name, config.server.bind, config.server.port, config.board.id
+    );
+    Ok(())
+}
+
 pub fn initialize(
     path: &Path,
     options: &Options,

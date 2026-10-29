@@ -49,7 +49,8 @@ def main():
             return json.loads(result.stdout if ok else result.stderr)
 
         def start(demo):
-            process = subprocess.Popen(base + ["run"] + (["--demo"] if demo else []), stdout=subprocess.DEVNULL, stderr=log)
+            # Initial bind must not override existing configuration.
+            process = subprocess.Popen(base + ["run", "--init", "--init-bind", "192.0.2.1"] + (["--demo"] if demo else []), stdout=subprocess.DEVNULL, stderr=log)
             eventually(lambda: cli("status"))
             return process
 
@@ -68,7 +69,7 @@ def main():
                 assert cli("config", "validate")["board_id"] == reset["board"]["id"]
 
                 # Exercise setup in a real terminal, including cancellation and EOF.
-                def setup_terminal(arguments, answers, expected_success, config_path=config):
+                def setup_terminal(arguments, answers, expected_success, config_path=config, daemon_after=False):
                     master, slave = pty.openpty()
                     process = subprocess.Popen([binary, "--config", config_path, "--port", str(port)] + arguments, stdin=slave, stdout=slave, stderr=slave)
                     output = bytearray()
@@ -81,6 +82,10 @@ def main():
                             eventually(prompted)
                             output.clear()
                             os.write(master, answer)
+                        if daemon_after:
+                            started = eventually(lambda: cli("status"))
+                            assert started["config"]["board"]["name"] == "Startup board"
+                            process.terminate()
                         assert (process.wait(timeout=5) == 0) == expected_success
                     finally:
                         if process.poll() is None:
@@ -106,7 +111,21 @@ def main():
                     (b"Camera count", b"\n"),
                 ], True, config_path=str(wizard_path))
                 assert 'name = "Wizard board"' in wizard_path.read_text()
+                startup_path = str(Path(directory) / "startup.toml")
+                setup_terminal(["run", "--init"], [
+                    (b"Board name", b"\x04"),
+                ], False, config_path=startup_path)
+                assert not Path(startup_path).exists()
+                setup_terminal(["run", "--init"], [
+                    (b"Board name", b"Startup board\n"),
+                    (b"Listen address [", b"\n"),
+                    (b"Port [", b"\n"),
+                    (b"Camera count", b"\n"),
+                ], True, config_path=startup_path, daemon_after=True)
                 wizard_path.write_text("invalid TOML [")
+                invalid_start = subprocess.run([binary, "--config", str(wizard_path), "run", "--init"], capture_output=True, text=True, timeout=5)
+                assert invalid_start.returncode != 0
+                assert wizard_path.read_text() == "invalid TOML ["
                 repaired = subprocess.run([binary, "--config", str(wizard_path), "--json", "config", "reset", "--yes", "--defaults"], check=True, capture_output=True, text=True)
                 assert json.loads(repaired.stdout)["server"]["port"] == 5180
 

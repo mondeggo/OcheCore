@@ -16,16 +16,11 @@ if [[ "$test_uid" == 0 ]]; then
   test_gid=65532
   chown "$test_uid:$test_gid" "$data_dir"
 fi
-docker run --rm --network none --read-only \
-  --user "$test_uid:$test_gid" \
-  --cap-drop ALL --security-opt no-new-privileges:true \
-  --mount "type=bind,source=$data_dir,target=/data" \
-  "$image" init --defaults >/dev/null
 docker run --detach --name "$container" --network none --read-only \
   --user "$test_uid:$test_gid" \
   --cap-drop ALL --security-opt no-new-privileges:true \
   --mount "type=bind,source=$data_dir,target=/data" \
-  "$image" --bind 0.0.0.0 run --demo >/dev/null
+  "$image" >/dev/null
 ready=false
 for _ in {1..40}; do
   if docker exec "$container" /usr/local/bin/oche-core status --json >/dev/null 2>&1; then ready=true; break; fi
@@ -33,14 +28,14 @@ for _ in {1..40}; do
 done
 if [[ "$ready" != true ]]; then docker logs "$container"; exit 1; fi
 docker exec "$container" /usr/local/bin/oche-core start --json >/dev/null
-docker exec "$container" /usr/local/bin/oche-core demo throw T20 --json > /tmp/"$container".json
-python3 - /tmp/"$container".json <<'PY'
-import json, sys
-s = json.load(open(sys.argv[1]))
-assert s['throws'][0]['score'] == 60 and s['throws'][0]['synthetic']
-assert not s['capabilities']['vision']
-PY
-rm /tmp/"$container".json
+docker logs "$container" > "$data_dir/startup.log" 2>&1
+python3 - "$data_dir/startup.log" <<'CHECK'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+assert 'No configuration found' in text
+assert 'Starting the daemon now' in text
+CHECK
 docker exec "$container" /usr/local/bin/oche-core config set board.name 'Container board' --json >/dev/null
 first=$(docker exec "$container" /usr/local/bin/oche-core status --json)
 docker restart --time 5 "$container" >/dev/null
@@ -56,4 +51,4 @@ assert a['config']['board']['id'] == b['config']['board']['id']
 assert b['config']['board']['name'] == 'Container board'
 assert a['session_id'] != b['session_id']
 PY
-echo 'PASS: non-root/read-only container, host data folder, offline controls, synthetic visit, persistent identity and configuration'
+echo 'PASS: first-run setup and automatic startup, non-root/read-only container, offline controls, persistent identity and configuration'

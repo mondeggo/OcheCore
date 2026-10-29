@@ -47,6 +47,12 @@ enum Action {
     Init(setup::Options),
     /// Own the board and run the foreground control service.
     Run {
+        /// Initialize missing configuration, then run; prompt on a TTY, otherwise use defaults.
+        #[arg(long)]
+        init: bool,
+        /// Initial listen address for a new configuration only (used by Docker).
+        #[arg(long, requires = "init")]
+        init_bind: Option<IpAddr>,
         /// Enable explicitly synthetic throws and takeout; no cameras are opened.
         #[arg(long)]
         demo: bool,
@@ -193,7 +199,7 @@ async fn execute(args: Args) -> Result<()> {
             "--bind is only valid with run, init, or config reset; --host selects a daemon to manage"
         );
     }
-    if (matches!(args.command, Some(Action::Run { .. }))
+    if (matches!(args.command, Some(Action::Run { init: false, .. }))
         || (args.command.is_none() && args.host == "127.0.0.1"))
         && !path.try_exists()?
     {
@@ -203,11 +209,19 @@ async fn execute(args: Args) -> Result<()> {
             path
         );
     }
-    if let Some(Action::Run { demo }) = args.command {
+    if let Some(Action::Run {
+        demo,
+        init,
+        init_bind,
+    }) = args.command
+    {
         if args.host != "127.0.0.1" {
             bail!(
                 "--host is for management commands; use --bind to select the service listen address"
             );
+        }
+        if init && !path.try_exists()? {
+            setup::initialize_for_run(&path, args.bind.or(init_bind), args.port, args.json)?;
         }
         let store = Store::acquire(&path)?;
         let config = storage::read(&path)?;
