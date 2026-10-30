@@ -20,22 +20,17 @@ use std::time::Duration;
 use tokio::sync::{mpsc, watch};
 
 const TABS: [&str; 2] = ["1 Board", "2 Events"];
-const CONFIG_FIELDS: [&str; 6] = [
-    "board.name",
-    "server.bind",
-    "server.port",
+const BOARD_FIELDS: [&str; 3] = ["board.name", "server.bind", "server.port"];
+const BOARD_LABELS: [&str; 3] = ["Name", "IP address", "Port"];
+/// Shown in this order under DETECTION SETTINGS; the last two apply to every camera.
+const DETECTION_FIELDS: [&str; 4] = [
     "detection.speed",
     "detection.standby_seconds",
-    "cameras.count",
+    "cameras.*.resolution",
+    "cameras.*.fps",
 ];
-const CONFIG_LABELS: [&str; 6] = [
-    "Name",
-    "IP address",
-    "Port",
-    "Detection speed",
-    "Standby after (s)",
-    "Cameras",
-];
+const DETECTION_LABELS: [&str; 4] = ["Detection speed", "Standby after (s)", "Resolution", "FPS"];
+const DART_START: usize = BOARD_FIELDS.len();
 /// Fields with a button on each camera row; resolution and FPS are edited for
 /// all cameras at once, the 20 reference by `orient`, and the rest by `config set`.
 const CAMERA_VISIBLE: [usize; 2] = [0, 4];
@@ -50,15 +45,52 @@ const CAMERA_FIELDS: [&str; 7] = [
 ];
 /// Manual exposure presets in 100 µs units; "auto" keeps the camera's own.
 const EXPOSURES: [&str; 8] = ["auto", "50", "75", "100", "150", "200", "300", "500"];
-const CAMERA_START: usize = CONFIG_FIELDS.len() + 3;
+const CAMERA_START: usize = DART_START + 3;
+
+/// First selectable detection setting, after the camera rows.
+fn detection_start(snapshot: &Snapshot) -> usize {
+    CAMERA_START + snapshot.config.cameras.len()
+}
 
 enum Request {
     Command(Command),
     Configure(ConfigChange),
 }
 
+/// A request the daemon is working on, so the screen can say what is happening.
+#[derive(Clone)]
+struct Busy {
+    label: String,
+    since: std::time::Instant,
+}
+
+fn busy_label(request: &Request) -> String {
+    match request {
+        Request::Configure(_) => "Saving settings".into(),
+        Request::Command(command) => match command {
+            Command::Start => "Starting the board and opening the cameras".into(),
+            Command::Stop => "Stopping the board".into(),
+            Command::Reset => "Resetting the visit".into(),
+            Command::Wake => "Waking the board".into(),
+            Command::Calibrate { camera: Some(n) } => {
+                format!("Calibrating camera {n}; keep the board empty and still")
+            }
+            Command::Calibrate { camera: None } => {
+                "Calibrating all cameras; keep the board empty and still".into()
+            }
+            Command::OrientBegin => "Remembering the empty board".into(),
+            Command::OrientFinish => "Finding the dart in each camera".into(),
+            Command::CorrectThrow { .. } => "Correcting the dart".into(),
+            Command::DemoThrow { .. } | Command::DemoTakeout { .. } => {
+                "Sending a demo input".into()
+            }
+        },
+    }
+}
+
 #[derive(Clone, Default)]
 struct View {
+    busy: Option<Busy>,
     snapshot: Option<Snapshot>,
     events: Vec<NativeEvent>,
     error: Option<String>,
@@ -93,6 +125,7 @@ enum MouseAction {
     Key(KeyCode),
     CameraField(usize, usize),
     Config(usize),
+    Detection(usize),
     Dart(usize),
     Choice(usize),
 }
@@ -147,11 +180,14 @@ pub async fn run(client: Client) -> Result<()> {
     let mut view = View::default();
     let shutdown = crate::shutdown();
     tokio::pin!(shutdown);
+    // Redraw twice a second so elapsed times of long operations keep moving.
+    let mut tick = tokio::time::interval(Duration::from_millis(500));
     loop {
         let mut hits = Vec::new();
         terminal.draw(|frame| hits = render(frame, &mut ui, &view, &endpoint))?;
         tokio::select! {
             _ = &mut shutdown => break,
+            _ = tick.tick() => {}
             result = view_rx.changed() => {
                 if result.is_err() { break; }
                 let inventory = std::mem::take(&mut view.inventory);
@@ -199,7 +235,7 @@ fn handle_mouse(
                 Some(KeyCode::Enter)
             }
             Some(MouseAction::Dart(index)) => {
-                ui.selected = CONFIG_FIELDS.len() + index;
+                ui.selected = DART_START + index;
                 Some(KeyCode::Enter)
             }
             Some(MouseAction::Choice(index)) => {
@@ -212,6 +248,10 @@ fn handle_mouse(
                 ui.selected = index;
                 Some(KeyCode::Enter)
             }
+            Some(MouseAction::Detection(index)) => view.snapshot.as_ref().map(|snapshot| {
+                ui.selected = detection_start(snapshot) + index;
+                KeyCode::Enter
+            }),
             None => None,
         },
         MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
@@ -254,14 +294,20 @@ async fn network(
             _ = interval.tick() => client.snapshot().await,
             request = requests.recv() => match request {
                 Some(Request::Command(command)) => {
+                    view.busy = Some(Busy { label: busy_label(&Request::Command(command.clone())), since: std::time::Instant::now() });
+                    let _ = updates.send(view.clone());
                     let result = client.command(&command).await;
+                    view.busy = None;
                     view.feedback = match &result { Ok(_) => "Command applied".into(), Err(error) => format!("{error:#}") };
                     // A rejected command does not mean the daemon is disconnected.
                     if result.is_err() { let _ = updates.send(view.clone()); continue; }
                     result
                 }
                 Some(Request::Configure(change)) => {
+                    view.busy = Some(Busy { label: busy_label(&Request::Configure(change.clone())), since: std::time::Instant::now() });
+                    let _ = updates.send(view.clone());
                     let result = client.configure(&change).await;
+                    view.busy = None;
                     view.feedback = match &result { Ok(_) => "Configuration saved".into(), Err(error) => format!("{error:#}") };
                     if result.is_err() { let _ = updates.send(view.clone()); continue; }
                     result
@@ -425,7 +471,8 @@ fn handle_key(ui: &mut Ui, view: &View, key: KeyEvent, tx: &mpsc::Sender<Request
     if view.error.is_some() {
         return;
     }
-    let count = CAMERA_START + snapshot.config.cameras.len();
+    let cameras_end = detection_start(snapshot);
+    let count = cameras_end + DETECTION_FIELDS.len();
     ui.selected = ui.selected.min(count.saturating_sub(1));
     match key.code {
         KeyCode::Up if ui.tab == 0 => {
@@ -436,15 +483,15 @@ fn handle_key(ui: &mut Ui, view: &View, key: KeyEvent, tx: &mpsc::Sender<Request
             ui.selected = (ui.selected + 1) % count;
             ui.follow_selection = true;
         }
-        KeyCode::Left if ui.tab == 0 && ui.selected >= CAMERA_START => {
+        KeyCode::Left if ui.tab == 0 && (CAMERA_START..cameras_end).contains(&ui.selected) => {
             ui.camera_field = step_field(ui.camera_field, false)
         }
-        KeyCode::Right if ui.tab == 0 && ui.selected >= CAMERA_START => {
+        KeyCode::Right if ui.tab == 0 && (CAMERA_START..cameras_end).contains(&ui.selected) => {
             ui.camera_field = step_field(ui.camera_field, true)
         }
         KeyCode::Enter if ui.tab == 0 => {
-            if (CONFIG_FIELDS.len()..CAMERA_START).contains(&ui.selected) {
-                let index = ui.selected - CONFIG_FIELDS.len();
+            if (DART_START..CAMERA_START).contains(&ui.selected) {
+                let index = ui.selected - DART_START;
                 let Some(dart) = snapshot.throws.get(index) else {
                     ui.notice = "No throw to correct in this slot".into();
                     return;
@@ -463,7 +510,7 @@ fn handle_key(ui: &mut Ui, view: &View, key: KeyEvent, tx: &mpsc::Sender<Request
                 });
                 return;
             }
-            if ui.selected >= CAMERA_START && ui.camera_field == 4 {
+            if (CAMERA_START..cameras_end).contains(&ui.selected) && ui.camera_field == 4 {
                 let camera = (ui.selected - CAMERA_START + 1) as u8;
                 calibrate_or_orient(ui, snapshot, tx, Some(camera));
                 return;
@@ -505,13 +552,6 @@ fn handle_key(ui: &mut Ui, view: &View, key: KeyEvent, tx: &mpsc::Sender<Request
         KeyCode::Char('x') => send(ui, tx, Request::Command(Command::Stop)),
         KeyCode::Char('r') => send(ui, tx, Request::Command(Command::Reset)),
         KeyCode::Char('w') => send(ui, tx, Request::Command(Command::Wake)),
-        KeyCode::Char(ch @ ('u' | 'f')) if ui.tab == 0 => {
-            let field = if ch == 'u' { "resolution" } else { "fps" };
-            match all_cameras_editor(snapshot, &view.inventory, field) {
-                Ok(editor) => ui.editor = Some(editor),
-                Err(message) => ui.notice = message,
-            }
-        }
         KeyCode::Char('o') if snapshot.mode == Mode::Live => orient_step(ui, tx),
         KeyCode::Char('c') if snapshot.mode == Mode::Live => {
             calibrate_or_orient(ui, snapshot, tx, None)
@@ -649,7 +689,8 @@ fn editable(
     inventory: &CameraInventory,
 ) -> Result<(String, String, Vec<String>), String> {
     let c = &snapshot.config;
-    if ui.selected >= CAMERA_START {
+    let cameras_end = detection_start(snapshot);
+    if (CAMERA_START..cameras_end).contains(&ui.selected) {
         let camera = &c.cameras[ui.selected - CAMERA_START];
         let field = CAMERA_FIELDS[ui.camera_field];
         let key = format!("cameras.{}.{}", camera.slot, field);
@@ -728,7 +769,14 @@ fn editable(
         };
         return Ok((key, value, choices));
     }
-    let key = CONFIG_FIELDS[ui.selected];
+    let key = match ui.selected.checked_sub(cameras_end) {
+        Some(index) => DETECTION_FIELDS[index.min(DETECTION_FIELDS.len() - 1)],
+        None => BOARD_FIELDS[ui.selected.min(BOARD_FIELDS.len() - 1)],
+    };
+    if let Some(field) = key.strip_prefix("cameras.*.") {
+        let editor = all_cameras_editor(snapshot, inventory, field)?;
+        return Ok((editor.key, editor.value, editor.choices));
+    }
     let value = config_value(snapshot, key);
     let choices = match key {
         "detection.speed" => Speed::ALL
@@ -738,7 +786,6 @@ fn editable(
         "detection.standby_seconds" => [0, 300, 600, 900, 1800, 3600]
             .map(|v| v.to_string())
             .to_vec(),
-        "cameras.count" => [1, 2, 3, 4].map(|v| v.to_string()).to_vec(),
         _ => vec![],
     };
     Ok((key.into(), value, choices))
@@ -838,7 +885,8 @@ fn config_value(s: &Snapshot, key: &str) -> String {
         "detection.standby_seconds" => s.config.detection.standby_seconds.to_string(),
         "server.bind" => s.config.server.bind.to_string(),
         "server.port" => s.config.server.port.to_string(),
-        "cameras.count" => s.config.cameras.len().to_string(),
+        "cameras.*.resolution" => common_mode(s, true),
+        "cameras.*.fps" => common_mode(s, false),
         _ => String::new(),
     }
 }
@@ -945,7 +993,46 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, _endpoint: &str) -> Vec<H
             "Full live JSON: oche-core events --json (use this board's host/port)",
         ));
     } else if let Some(s) = &view.snapshot {
-        ui.selected = ui.selected.min(CAMERA_START + s.config.cameras.len() - 1);
+        let detection_at = detection_start(s);
+        ui.selected = ui.selected.min(detection_at + DETECTION_FIELDS.len() - 1);
+        lines.push(Line::styled("BOARD SETTINGS", selection(true)));
+        for (index, key) in BOARD_FIELDS.iter().enumerate() {
+            if ui.selected == index {
+                selected_row = lines.len();
+            }
+            row_hits.push((lines.len(), MouseAction::Config(index)));
+            lines.push(Line::styled(
+                format!(
+                    "{} {:27} {}",
+                    if ui.selected == index { "›" } else { " " },
+                    BOARD_LABELS[index],
+                    plain(&config_value(s, key))
+                ),
+                selection(ui.selected == index),
+            ));
+        }
+        lines.push(Line::raw(""));
+        lines.push(Line::styled("DARTS", selection(true)));
+        darts_row = Some(lines.len());
+        if (DART_START..CAMERA_START).contains(&ui.selected) {
+            selected_row = lines.len();
+        }
+        lines.push(Line::raw(""));
+        // Why the last unplaced dart was uncertain, one fact per line.
+        if let Some(note) = s.throws.iter().rev().find_map(|t| t.uncertainty.as_deref()) {
+            for (i, part) in note.split("; ").enumerate() {
+                lines.push(Line::styled(
+                    format!("  {} {}", if i == 0 { "?" } else { " " }, plain(part)),
+                    Style::default().fg(Color::Yellow),
+                ));
+            }
+        }
+        lines.push(Line::raw(format!(
+            "  {:27} {}",
+            "detection",
+            plain(&detection_summary(s))
+        )));
+        lines.push(Line::raw(""));
         lines.push(Line::styled("CONTROLS", selection(true)));
         controls_row = Some(lines.len());
         lines.push(Line::raw(""));
@@ -965,35 +1052,24 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, _endpoint: &str) -> Vec<H
             ),
             Span::raw(format!("  {}", plain(&activity.detail))),
         ]));
-        lines.push(Line::raw(""));
-        lines.push(Line::styled("BOARD & DETECTION SETTINGS", selection(true)));
-        for (index, key) in CONFIG_FIELDS.iter().enumerate() {
-            if ui.selected == index {
-                selected_row = lines.len();
+        // What the daemon is doing for a command that takes a while.
+        lines.push(match &view.busy {
+            Some(busy) => {
+                let spin =
+                    ["|", "/", "-", "\\"][(busy.since.elapsed().as_millis() / 250 % 4) as usize];
+                Line::styled(
+                    format!(
+                        "  Doing: {spin} {} ({}s)",
+                        plain(&busy.label),
+                        busy.since.elapsed().as_secs()
+                    ),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                )
             }
-            row_hits.push((lines.len(), MouseAction::Config(index)));
-            lines.push(Line::styled(
-                format!(
-                    "{} {:27} {}",
-                    if ui.selected == index { "›" } else { " " },
-                    CONFIG_LABELS[index],
-                    plain(&config_value(s, key))
-                ),
-                selection(ui.selected == index),
-            ));
-        }
-        lines.push(Line::raw(""));
-        lines.push(Line::styled("DARTS", selection(true)));
-        darts_row = Some(lines.len());
-        if (CONFIG_FIELDS.len()..CAMERA_START).contains(&ui.selected) {
-            selected_row = lines.len();
-        }
-        lines.push(Line::raw(""));
-        lines.push(Line::raw(format!(
-            "  {:27} {}",
-            "detection",
-            plain(&detection_summary(s))
-        )));
+            None => Line::raw(""),
+        });
         lines.push(Line::raw(""));
         camera_heading = Some(lines.len());
         lines.push(Line::styled("CAMERAS", selection(true)));
@@ -1012,6 +1088,24 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, _endpoint: &str) -> Vec<H
         }
         calibrate_row = Some(lines.len());
         lines.push(Line::raw(""));
+        lines.push(Line::raw(""));
+        lines.push(Line::styled("DETECTION SETTINGS", selection(true)));
+        for (index, key) in DETECTION_FIELDS.iter().enumerate() {
+            let selected = ui.selected == detection_at + index;
+            if selected {
+                selected_row = lines.len();
+            }
+            row_hits.push((lines.len(), MouseAction::Detection(index)));
+            lines.push(Line::styled(
+                format!(
+                    "{} {:27} {} v",
+                    if selected { "›" } else { " " },
+                    DETECTION_LABELS[index],
+                    plain(&config_value(s, key))
+                ),
+                selection(selected),
+            ));
+        }
     } else if view.error.is_none() {
         lines.push(Line::raw("Connecting to the native control service…"));
     }
@@ -1092,23 +1186,6 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, _endpoint: &str) -> Vec<H
             connected && snapshot.mode == Mode::Live,
             false,
         );
-        let mut x = content.x + 26;
-        for (label, key) in [
-            (format!("Resolution {}", common_mode(snapshot, true)), 'u'),
-            (format!("FPS {}", common_mode(snapshot, false)), 'f'),
-        ] {
-            let rect = Rect::new(x, y, label.chars().count() as u16 + 2, 1);
-            button(
-                frame,
-                &mut hits,
-                rect,
-                &label,
-                MouseAction::Key(KeyCode::Char(key)),
-                connected,
-                false,
-            );
-            x = rect.right() + 1;
-        }
     }
     if let Some(y) = darts_row.and_then(visible_y) {
         let snapshot = view.snapshot.as_ref().unwrap();
@@ -1138,7 +1215,7 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, _endpoint: &str) -> Vec<H
                 &label,
                 MouseAction::Dart(index),
                 connected && index < snapshot.throws.len(),
-                ui.selected == CONFIG_FIELDS.len() + index,
+                ui.selected == DART_START + index,
             );
         }
     }
@@ -1163,14 +1240,14 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, _endpoint: &str) -> Vec<H
                         c.device.clone()
                     }
                 });
-            let device_width = (plain(&label).chars().count() as u16 + 2)
+            let device_width = (plain(&label).chars().count() as u16 + 4)
                 .max(30)
                 .min(content.width.saturating_sub(10 + 1 + 11 + 1));
             button(
                 frame,
                 &mut hits,
                 Rect::new(content.x + 10, y, device_width, 1),
-                &plain(&label),
+                &format!("{} v", plain(&label)),
                 MouseAction::CameraField(index, 0),
                 connected,
                 ui.selected == CAMERA_START + index && ui.camera_field == 0,
@@ -1321,7 +1398,10 @@ fn button(
             .bg(Color::Yellow)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(Color::Black).bg(Color::Gray)
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Gray)
+            .add_modifier(Modifier::BOLD)
     };
     frame.render_widget(Paragraph::new(format!(" {label} ")).style(style), area);
     if enabled {
@@ -1412,12 +1492,17 @@ mod tests {
             "1: —",
             "2: —",
             "3: —",
+            "BOARD SETTINGS",
             "Name",
             "IP address",
             "Port",
-            "Detection speed",
-            "Cameras",
+            "CONTROLS",
             "State:",
+            "DETECTION SETTINGS",
+            "Detection speed",
+            "Standby after",
+            "Resolution",
+            "FPS",
             "Camera 1",
             "+ Add",
             "CONTROLS",
@@ -1630,22 +1715,31 @@ mod tests {
     }
 
     #[test]
-    fn settings_come_in_the_requested_order_with_readable_names() {
+    fn sections_come_in_the_requested_order_with_dropdown_markers() {
         let view = view(1);
-        let (_, text) = draw(&mut Ui::default(), &view, 110, 40);
+        let (_, text) = draw(&mut Ui::default(), &view, 110, 50);
         let at = |label: &str| {
             text.find(label)
                 .unwrap_or_else(|| panic!("missing {label}"))
         };
-        assert!(at("Name") < at("IP address"));
-        assert!(at("IP address") < at("Port"));
-        assert!(at("Port") < at("Detection speed"));
-        assert!(at("Detection speed") < at("Cameras"));
+        assert!(at("BOARD SETTINGS") < at("DARTS"));
+        assert!(at("DARTS") < at("CONTROLS"));
+        assert!(at("CONTROLS") < at("CAMERAS"));
+        assert!(at("CAMERAS") < at("DETECTION SETTINGS"));
+        assert!(at("Name") < at("IP address") && at("IP address") < at("Port"));
+        assert!(
+            at("Detection speed") < at("Standby after") && at("Standby after") < at("Resolution")
+        );
         assert!(
             !text.contains("set 20 hint"),
             "the 20 is not set per camera"
         );
-        assert!(text.contains("Resolution 1280x720") && text.contains("FPS 30"));
+        assert!(
+            !text.contains("Cameras  "),
+            "the camera count is set with + and -"
+        );
+        assert!(text.contains("default v"), "dropdown rows are marked");
+        assert!(text.contains("1280x720 v") && text.contains("30 v"));
     }
 
     #[test]

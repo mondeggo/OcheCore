@@ -50,7 +50,7 @@ def main():
 
         def start(demo):
             # Initial bind must not override existing configuration.
-            process = subprocess.Popen(base + ["run", "--init-bind", "192.0.2.1"] + (["--demo"] if demo else []), stdout=subprocess.DEVNULL, stderr=log)
+            process = subprocess.Popen(base + ["run", "--init-bind", "192.0.2.1", "--log", "info"] + (["--demo"] if demo else []), stdout=subprocess.DEVNULL, stderr=log)
             eventually(lambda: cli("status"))
             return process
 
@@ -182,7 +182,7 @@ def main():
                     def connected():
                         if select.select([master], [], [], 0.1)[0]:
                             rendered.extend(os.read(master, 65536))
-                        return b"BOARD & DETECTION" in rendered and b"State:" in rendered
+                        return b"BOARD SETTINGS" in rendered and b"State:" in rendered
                     eventually(connected)
                     def settle_ui():
                         # A successful API response can precede the TUI's next draw.
@@ -209,12 +209,12 @@ def main():
                     os.write(master, b"s")
                     eventually(lambda: cli("status")["state"] == "running")
                     settle_ui()
-                    click(5, 8)  # Board name row, below the controls and state.
+                    click(5, 4)  # Board name row, first in the board settings.
                     os.write(master, b"\x15Mouse room")
                     click(20, 17)  # Save in the editor.
                     eventually(lambda: cli("status")["config"]["board"]["name"] == "Mouse room")
                     settle_ui()
-                    click(5, 11)  # Detection speed dropdown.
+                    click(5, 25)  # Detection speed dropdown, in the detection settings below the camera.
                     settle_ui()
                     os.write(master, b"\x1b[C\r")
                     eventually(lambda: cli("status")["config"]["detection"]["speed"] == "high")
@@ -224,7 +224,7 @@ def main():
                     os.write(master, b"\r")
                     eventually(lambda: len(cli("status")["config"]["cameras"]) == 2)
                     settle_ui()
-                    click(3, 16)  # First dart, below board settings.
+                    click(3, 9)  # First dart, below board settings.
                     settle_ui()
                     os.write(master, b"\x15D20\r")
                     corrected = eventually(lambda: (state if (state := cli("status"))["throws"][0]["label"] == "D20" else None))
@@ -248,6 +248,9 @@ def main():
                     os.close(master)
                     os.close(slave)
 
+                # --log info prints the same events to the daemon's terminal.
+                daemon_log = (Path(directory) / "daemon.log").read_text()
+                assert "Logging events" in daemon_log and "throw_accepted" in daemon_log and "takeout_completed" in daemon_log, daemon_log
                 # Shutdown must complete even while an SSE consumer remains connected.
                 stream = urllib.request.urlopen(f"http://127.0.0.1:{port}/api/v1/events", timeout=5)
                 stream.readline()
