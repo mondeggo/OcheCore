@@ -14,7 +14,9 @@ use std::collections::VecDeque;
 
 use oche_domain::board::BoardLine;
 
-use crate::mask::{Axis, GrayImage, ShaftFit, dilate, label, principal_axis, shaft_axis};
+use crate::mask::{
+    Axis, GrayImage, ShaftFit, dilate, flight_and_tip, label, principal_axis, shaft_axis,
+};
 use crate::{Abstention, FusionLimits, Impact, LineObservation, fuse_lines};
 
 /// Maps an image line through two pixels onto the board plane.
@@ -89,6 +91,10 @@ pub struct CameraChange {
     pub region: Option<(usize, Axis)>,
     pub shaft: Option<ShaftFit>,
     pub line: Option<LineObservation>,
+    /// Two pixels on the fitted dart line, and the tip when a flight settled it,
+    /// for drawing the detection over the frame.
+    pub image_line: Option<[(f64, f64); 2]>,
+    pub tip: Option<(f64, f64)>,
     /// The change mask and new reference, kept only when requested.
     pub detail: Option<(Vec<bool>, GrayImage)>,
 }
@@ -403,13 +409,38 @@ fn change(
             settings.min_slices,
         )
     });
-    let fitted = match (&shaft, elongated) {
-        (Some(shaft), _) => Some((shaft.point, shaft.direction, settings.line_sigma_mm)),
-        (None, Some((_, axis))) => {
+    // A flight in view (face-on, or overlapping other darts) makes the whole
+    // silhouette fat, but the line from the flight to the farthest changed pixel
+    // still follows the dart. It beats the principal axis, which the flight pulls.
+    let flight = largest.and_then(|(label, _)| {
+        let grouped: Vec<(usize, usize)> = labels
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| **l == label)
+            .map(|(i, _)| (i % after.width, i / after.width))
+            .collect();
+        let points: Vec<_> = points_of(label).collect();
+        flight_and_tip(&points, &grouped)
+    });
+    let flight_line = flight.map(|(centre, tip)| {
+        let (dx, dy) = (tip.0 - centre.0, tip.1 - centre.1);
+        let length = dx.hypot(dy).max(1.0);
+        (tip, (dx / length, dy / length), settings.fallback_sigma_mm)
+    });
+    let fitted = match (&shaft, flight_line, elongated) {
+        (Some(shaft), _, _) => Some((shaft.point, shaft.direction, settings.line_sigma_mm)),
+        (None, Some(line), _) => Some(line),
+        (None, None, Some((_, axis))) => {
             Some((axis.centroid, axis.direction, settings.fallback_sigma_mm))
         }
-        (None, None) => None,
+        (None, None, None) => None,
     };
+    let image_line = fitted.map(|((cx, cy), (dx, dy), _)| {
+        [
+            (cx - dx * 150.0, cy - dy * 150.0),
+            (cx + dx * 150.0, cy + dy * 150.0),
+        ]
+    });
     let line = fitted.and_then(|((cx, cy), (dx, dy), sigma_mm)| {
         let line = camera
             .mapper
@@ -428,6 +459,8 @@ fn change(
         region,
         shaft,
         line,
+        image_line,
+        tip: flight.map(|(_, tip)| tip),
         detail: keep_detail.then(|| (mask, after.clone())),
     }
 }
@@ -488,6 +521,50 @@ mod tests {
             *t += 0.1;
         }
         events
+    }
+
+    /// A synthetic dart: a thin barrel from `tip` towards `flight`, ending in a
+    /// solid square flight, as a flight seen face-on looks.
+    fn flighted_frame(tip: (f64, f64), flight: (f64, f64)) -> GrayImage {
+        let mut image = frame(&[(tip, flight)]);
+        for y in (flight.1 as usize - 18)..(flight.1 as usize + 18) {
+            for x in (flight.0 as usize - 18)..(flight.0 as usize + 18) {
+                image.data[y * image.width + x] = 20;
+            }
+        }
+        image
+    }
+
+    #[test]
+    fn a_face_on_flight_still_gives_a_dart_line_through_the_tip() {
+        let mut detector = Detector::new(
+            vec![(1, Some(Box::new(Offset))), (2, Some(Box::new(Offset)))],
+            Settings::default(),
+        );
+        let mut t = 0.0;
+        let empty = frame(&[]);
+        let _ = feed(&mut detector, &mut t, &empty, 2.0);
+        // Both darts end in the bull at (100, 100); each has a 36 px flight.
+        let dart_1 = flighted_frame((100.0, 100.0), (160.0, 40.0));
+        let dart_2 = flighted_frame((100.0, 100.0), (40.0, 30.0));
+        let mut events = Vec::new();
+        let end = t + 2.0;
+        while t < end {
+            events.extend(detector.push(1, t, dart_1.clone()));
+            events.extend(detector.push(2, t, dart_2.clone()));
+            t += 0.1;
+        }
+        let [
+            Event::Arrival {
+                impact, changes, ..
+            },
+        ] = events.as_slice()
+        else {
+            panic!("expected one arrival");
+        };
+        assert!(changes.iter().all(|c| c.line.is_some() && c.tip.is_some()));
+        let point = impact.as_ref().expect("two lines through the bull").point;
+        assert!(point.x.abs() < 3.0 && point.y.abs() < 3.0, "{point:?}");
     }
 
     #[test]

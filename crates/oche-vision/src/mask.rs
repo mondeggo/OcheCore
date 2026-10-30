@@ -177,6 +177,21 @@ const MIN_FLIGHT_PIXELS: usize = 300;
 /// The barrel must reach this far past the flight's own radius.
 const MIN_BARREL_PX: f64 = 20.0;
 
+/// With a flight in view: its centre and the tip, the changed pixel farthest
+/// from it, provided the barrel reaches `MIN_BARREL_PX` past the flight. The
+/// grouped pixels close small gaps in the flight's printed pattern.
+pub fn flight_and_tip(
+    points: &[(f64, f64)],
+    grouped: &[(usize, usize)],
+) -> Option<((f64, f64), (f64, f64))> {
+    let (centre, flight_radius) = flight_of(grouped)?;
+    let (tip, distance) = points
+        .iter()
+        .map(|p| (*p, (p.0 - centre.0).hypot(p.1 - centre.1)))
+        .max_by(|a, b| a.1.total_cmp(&b.1))?;
+    (distance - flight_radius >= MIN_BARREL_PX).then_some((centre, tip))
+}
+
 /// Centroid and radius of the wide, solid part of a silhouette (the flight),
 /// found by morphological opening: the barrel and shaft are too thin to survive.
 fn flight_of(pixels: &[(usize, usize)]) -> Option<((f64, f64), f64)> {
@@ -263,19 +278,11 @@ pub fn dart_ends(
         .filter(|(_, l)| **l == label)
         .map(|(i, _)| (i % after.width, i / after.width))
         .collect();
-    if let Some((centre, flight_radius)) = flight_of(&grouped_pixels) {
-        let far = points
-            .iter()
-            .map(|p| (*p, (p.0 - centre.0).hypot(p.1 - centre.1)))
-            .max_by(|a, b| a.1.total_cmp(&b.1));
-        if let Some((tip, distance)) = far
-            && distance - flight_radius >= MIN_BARREL_PX
-        {
-            return Ok(DartEnds {
-                ends: [centre, tip],
-                tip: Some(1),
-            });
-        }
+    if let Some((centre, tip)) = flight_and_tip(&points, &grouped_pixels) {
+        return Ok(DartEnds {
+            ends: [centre, tip],
+            tip: Some(1),
+        });
     }
     // A wide flight in view makes the whole silhouette fat; the barrel and
     // shaft alone give the line, so try them first.

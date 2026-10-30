@@ -60,6 +60,8 @@ pub struct Pipeline {
     orienting: Mutex<Option<Vec<(u8, RgbImage)>>>,
     /// Print what the detector sees to stderr.
     verbose: bool,
+    /// Where to save an annotated image per camera for each arrival.
+    images: Option<std::path::PathBuf>,
     stop: AtomicBool,
     supervisor: Mutex<Option<JoinHandle<()>>>,
 }
@@ -72,9 +74,24 @@ impl Pipeline {
     /// As [`Pipeline::spawn`]; with `verbose`, each detector event and motion
     /// change is described on stderr.
     pub fn spawn_verbose(engine: Arc<Mutex<Engine>>, verbose: bool) -> Arc<Self> {
+        Self::spawn_with(engine, verbose, None)
+    }
+
+    /// As [`Pipeline::spawn_verbose`]; with `images`, each arrival also saves one
+    /// PNG per camera showing the changed pixels and the fitted dart line. Only
+    /// the newest few arrivals are kept.
+    pub fn spawn_with(
+        engine: Arc<Mutex<Engine>>,
+        verbose: bool,
+        images: Option<std::path::PathBuf>,
+    ) -> Arc<Self> {
+        if let Some(dir) = &images {
+            let _ = std::fs::create_dir_all(dir);
+        }
         let pipeline = Arc::new(Self {
             engine,
             verbose,
+            images,
             running: Mutex::new(None),
             calibrating: Mutex::new(()),
             orienting: Mutex::new(None),
@@ -130,6 +147,7 @@ impl Pipeline {
                             mappers,
                             self.engine.clone(),
                             self.verbose,
+                            self.images.clone(),
                         ));
                     }
                     (None, Some(_)) => *running = None,
@@ -455,6 +473,58 @@ fn hint_for(camera: &CameraConfig, previous: Option<&CalibrationRecord>) -> Opti
     Homography::from_matrix(matrix)?.to_image(BoardPoint::new(0.0, 140.0))
 }
 
+/// Keep this many arrivals' images.
+const KEPT_ARRIVALS: u32 = 30;
+
+/// Saves `arrival-NNNN-cameraK.png`: the frame, changed pixels in red, the
+/// fitted dart line in cyan and the tip, when a flight settled it, in green.
+fn save_images(dir: &std::path::Path, arrival: u32, changes: &[CameraChange], verbose: bool) {
+    for change in changes {
+        let Some((mask, gray)) = &change.detail else {
+            continue;
+        };
+        let mut image = RgbImage::new(gray.width, gray.height);
+        for (i, (&g, &changed)) in gray.data.iter().zip(mask).enumerate() {
+            let rgb = if changed {
+                [255, g / 3, g / 3]
+            } else {
+                [g, g, g]
+            };
+            image.data[i * 3..i * 3 + 3].copy_from_slice(&rgb);
+        }
+        if let Some([a, b]) = change.image_line {
+            for step in 0..=300 {
+                let t = f64::from(step) / 300.0;
+                let (x, y) = (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t);
+                for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                    image.set(x as i64 + dx, y as i64 + dy, [0, 255, 255]);
+                }
+            }
+        }
+        if let Some((x, y)) = change.tip {
+            for offset in -10..=10 {
+                for width in 0..2 {
+                    image.set(x as i64 + offset, y as i64 + width, [0, 255, 0]);
+                    image.set(x as i64 + width, y as i64 + offset, [0, 255, 0]);
+                }
+            }
+        }
+        let path = dir.join(format!("arrival-{arrival:04}-camera{}.png", change.slot));
+        match std::fs::write(&path, image.encode_png()) {
+            Ok(()) if verbose => eprintln!("detector: saved {}", path.display()),
+            Ok(()) => {}
+            Err(error) => eprintln!("detector: could not save {}: {error}", path.display()),
+        }
+    }
+    if let Some(old) = arrival.checked_sub(KEPT_ARRIVALS) {
+        for change in changes {
+            let _ = std::fs::remove_file(
+                dir.join(format!("arrival-{old:04}-camera{}.png", change.slot)),
+            );
+        }
+    }
+}
+
 /// One line per detector event, with what each camera saw.
 fn describe(event: &Event, board: &BoardDimensions) -> String {
     let views = |changes: &[CameraChange]| {
@@ -596,6 +666,7 @@ fn start(
     mappers: Mappers,
     engine: Arc<Mutex<Engine>>,
     verbose: bool,
+    images: Option<std::path::PathBuf>,
 ) -> Running {
     let (samples, receiver) = mpsc::sync_channel(SAMPLE_QUEUE);
     let cameras = plan
@@ -608,7 +679,11 @@ fn start(
         .name("detector".into())
         .spawn(move || {
             let mut detector = Detector::new(mappers, Settings::default());
+            if images.is_some() {
+                detector = detector.keep_detail();
+            }
             let mut reported = false;
+            let mut arrivals = 0u32;
             while let Ok(sample) = receiver.recv() {
                 let event = detector.push(sample.slot, sample.timestamp, sample.luma);
                 let motion = detector.in_motion();
@@ -630,6 +705,10 @@ fn start(
                 };
                 if verbose {
                     eprintln!("detector: {}", describe(&event, &board));
+                }
+                if let (Some(dir), Event::Arrival { changes, .. }) = (&images, &event) {
+                    arrivals += 1;
+                    save_images(dir, arrivals, changes, verbose);
                 }
                 let observation = match event {
                     Event::Baseline { .. } => Observation::Baseline,

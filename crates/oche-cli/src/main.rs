@@ -72,6 +72,11 @@ enum Action {
         /// (changed pixels, dart lines, impacts, abstentions). Silent by default.
         #[arg(long, value_enum, value_name = "LEVEL")]
         log: Option<LogLevel>,
+        /// Save an annotated PNG per camera for each arrival into this folder
+        /// (changed pixels in red, the fitted dart line in cyan, the tip in green),
+        /// keeping the newest 30 arrivals. For diagnosing detection.
+        #[arg(long, value_name = "DIR")]
+        debug_images: Option<std::path::PathBuf>,
     },
     /// Open the interactive terminal UI for a local or remote daemon.
     Remote,
@@ -247,6 +252,7 @@ async fn execute(args: Args) -> Result<()> {
         no_capture,
         init_bind,
         log,
+        debug_images,
     }) = args.command
     {
         if args.host != "127.0.0.1" {
@@ -314,7 +320,11 @@ async fn execute(args: Args) -> Result<()> {
             );
         }
         let pipeline = (mode == Mode::Live).then(|| {
-            oche_engine::live::Pipeline::spawn_verbose(engine.clone(), log == Some(LogLevel::Debug))
+            oche_engine::live::Pipeline::spawn_with(
+                engine.clone(),
+                log == Some(LogLevel::Debug),
+                debug_images,
+            )
         });
         let service = oche_api::Service::shared(engine, pipeline.clone());
         let result = oche_api::serve(listener, service, shutdown()).await;
