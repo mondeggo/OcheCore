@@ -915,6 +915,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "oche-capture"
+version = "0.1.0"
+dependencies = [
+ "linux-video",
+ "oche-domain",
+ "oche-vision",
+]
+
+[[package]]
 name = "oche-cli"
 version = "0.1.0"
 dependencies = [
@@ -948,7 +957,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "fs2",
+ "oche-calibration",
+ "oche-capture",
  "oche-domain",
+ "oche-vision",
+ "serde_json",
  "tempfile",
  "tokio",
  "toml",

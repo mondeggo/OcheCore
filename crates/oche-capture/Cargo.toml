@@ -1,0 +1,17 @@
+[package]
+name = "oche-capture"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+oche-domain.workspace = true
+oche-vision.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+linux-video = "0.1.1"
+
+[lints]
+workspace = true
