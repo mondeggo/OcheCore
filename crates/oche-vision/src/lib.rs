@@ -12,6 +12,7 @@
 //! feature quality.
 
 pub mod image;
+pub mod live;
 pub mod mask;
 
 use oche_domain::board::{BoardLine, BoardPoint};

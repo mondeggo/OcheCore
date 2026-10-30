@@ -28,6 +28,33 @@ impl RgbImage {
 }
 
 impl GrayImage {
+    /// Decodes a JPEG straight to luminance, skipping colour conversion.
+    pub fn decode_jpeg(bytes: &[u8]) -> Result<Self, String> {
+        use zune_jpeg::JpegDecoder;
+        use zune_jpeg::zune_core::bytestream::ZCursor;
+        use zune_jpeg::zune_core::colorspace::ColorSpace;
+        use zune_jpeg::zune_core::options::DecoderOptions;
+        let options = DecoderOptions::default()
+            .jpeg_set_out_colorspace(ColorSpace::Luma)
+            .set_max_width(crate::image::MAX_SIDE)
+            .set_max_height(crate::image::MAX_SIDE);
+        let mut decoder = JpegDecoder::new_with_options(ZCursor::new(bytes), options);
+        let data = decoder.decode().map_err(|error| format!("{error:?}"))?;
+        let info = decoder.info().ok_or("JPEG headers were not decoded")?;
+        let (width, height) = (usize::from(info.width), usize::from(info.height));
+        if data.len() != width * height {
+            return Err(format!(
+                "decoded {} bytes for a {width}x{height} luma frame",
+                data.len()
+            ));
+        }
+        Ok(Self {
+            width,
+            height,
+            data,
+        })
+    }
+
     /// Bilinear sample; `None` unless all four neighbours are inside.
     pub fn bilinear(&self, x: f64, y: f64) -> Option<f64> {
         if !(x >= 0.0 && y >= 0.0) {
@@ -96,6 +123,134 @@ impl GrayImage {
             .map(|(a, b)| a.abs_diff(*b) > threshold)
             .collect()
     }
+}
+
+/// Why [`dart_ends`] gave no answer, with the measurements behind it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TipError {
+    SizeMismatch,
+    /// No changed group reached `min_pixels`; `largest` is the biggest found.
+    TooFewPixels {
+        changed: usize,
+        largest: usize,
+    },
+    /// The largest changed group is not long and thin.
+    NotElongated {
+        pixels: usize,
+        length_over_width: f64,
+    },
+}
+
+impl std::fmt::Display for TipError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SizeMismatch => f.write_str("the two frames differ in size"),
+            Self::TooFewPixels { changed, largest } => write!(
+                f,
+                "only {changed} pixels changed, largest group {largest}; the dart is too small or too faint in this view"
+            ),
+            Self::NotElongated {
+                pixels,
+                length_over_width,
+            } => write!(
+                f,
+                "the changed shape ({pixels} px) is not dart-like (length/width {length_over_width:.1}, needs 3)"
+            ),
+        }
+    }
+}
+
+/// The two ends of the visible part of the largest object that arrived
+/// between two frames, in pixels. Which end is the tip is not decided here: a
+/// black steel tip is invisible on a black board and the flight may be out of
+/// frame, so width is no guide.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DartEnds {
+    pub ends: [(f64, f64); 2],
+}
+
+/// Finds the largest elongated object that arrived between two frames and
+/// returns where its silhouette ends.
+pub fn dart_ends(
+    before: &GrayImage,
+    after: &GrayImage,
+    threshold: u8,
+    min_pixels: usize,
+    group_radius: usize,
+) -> Result<DartEnds, TipError> {
+    if (before.width, before.height) != (after.width, after.height) {
+        return Err(TipError::SizeMismatch);
+    }
+    let mask = before.changed(after, threshold);
+    let changed = mask.iter().filter(|m| **m).count();
+    let (labels, regions) = label(
+        &dilate(&mask, after.width, after.height, group_radius),
+        after.width,
+    );
+    let points_of = |label: u32| {
+        labels
+            .iter()
+            .zip(&mask)
+            .enumerate()
+            .filter(move |(_, (l, m))| **l == label && **m)
+            .map(|(i, _)| ((i % after.width) as f64, (i / after.width) as f64))
+    };
+    let sizes: Vec<_> = regions
+        .iter()
+        .map(|r| (r.label, points_of(r.label).count()))
+        .collect();
+    let largest = sizes.iter().map(|s| s.1).max().unwrap_or(0);
+    let (label, _) = sizes
+        .into_iter()
+        .filter(|(_, count)| *count >= min_pixels)
+        .max_by_key(|(_, count)| *count)
+        .ok_or(TipError::TooFewPixels { changed, largest })?;
+    let points: Vec<_> = points_of(label).collect();
+    let axis = principal_axis(points.iter().copied())
+        .ok_or(TipError::TooFewPixels { changed, largest })?;
+    let ratio = axis.spread.0 / axis.spread.1.max(0.5);
+    // A wide flight in view makes the whole silhouette fat; the barrel and
+    // shaft alone give the line, so try them first.
+    if ratio >= 1.5
+        && let Some(shaft) = shaft_axis(&points, &axis, 2.0, 20)
+    {
+        return Ok(DartEnds { ends: shaft.ends });
+    }
+    if ratio < 3.0 {
+        return Err(TipError::NotElongated {
+            pixels: points.len(),
+            length_over_width: ratio,
+        });
+    }
+    let (dx, dy) = axis.direction;
+    let along = |p: &(f64, f64)| (p.0 - axis.centroid.0) * dx + (p.1 - axis.centroid.1) * dy;
+    let (low, high) = points
+        .iter()
+        .map(along)
+        .fold((f64::MAX, f64::MIN), |(lo, hi), t| (lo.min(t), hi.max(t)));
+    let end = (high - low) * 0.2;
+    // Mean position of the points within the outer fifth at one end.
+    let profile = |near_high: bool| {
+        let ends: Vec<_> = points
+            .iter()
+            .filter(|p| {
+                let t = along(p);
+                if near_high {
+                    t >= high - end
+                } else {
+                    t <= low + end
+                }
+            })
+            .collect();
+        let n = ends.len().max(1) as f64;
+        let mean = ends.iter().fold((0.0, 0.0), |s, p| (s.0 + p.0, s.1 + p.1));
+        (mean.0 / n, mean.1 / n)
+    };
+    let tip_low = profile(false);
+    let tip_high = profile(true);
+    Ok(DartEnds {
+        ends: [tip_low, tip_high],
+    })
 }
 
 /// Sets every pixel within `radius` (Chebyshev) of a set pixel.
@@ -340,6 +495,71 @@ fn fit_line(samples: &[(f64, f64)]) -> Option<(f64, f64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Synthetic bar along x from x = 50 to 149, 3 px thick. Not a real capture.
+    fn bar() -> (GrayImage, GrayImage) {
+        let empty = GrayImage {
+            width: 200,
+            height: 100,
+            data: vec![120; 200 * 100],
+        };
+        let mut with = empty.clone();
+        for x in 50..150 {
+            for dy in 0..3 {
+                with.data[(50 + dy) * 200 + x] = 20;
+            }
+        }
+        (empty, with)
+    }
+
+    #[test]
+    fn dart_ends_are_the_extremities_of_the_visible_object() {
+        let (empty, with) = bar();
+        let found = dart_ends(&empty, &with, 30, 80, 4).unwrap();
+        let mut xs = found.ends.map(|e| e.0);
+        xs.sort_by(f64::total_cmp);
+        assert!(
+            (xs[0] - 50.0).abs() < 6.0 && (xs[1] - 149.0).abs() < 6.0,
+            "{xs:?}"
+        );
+        assert!(found.ends.iter().all(|e| (e.1 - 51.0).abs() < 1.5));
+    }
+
+    #[test]
+    fn a_wide_flight_does_not_hide_the_barrel() {
+        let (empty, mut with) = bar();
+        // 28 px wide flight over the last 25 px of the bar.
+        for x in 125..150 {
+            for dy in -12..16 {
+                with.data[(50 + dy) as usize * 200 + x] = 20;
+            }
+        }
+        let found = dart_ends(&empty, &with, 30, 80, 4).unwrap();
+        let mut xs = found.ends.map(|e| e.0);
+        xs.sort_by(f64::total_cmp);
+        assert!(xs[0] < 70.0, "{xs:?}");
+        // The shaft stops where the flight begins.
+        assert!(xs[1] < 130.0, "{xs:?}");
+    }
+
+    #[test]
+    fn dart_ends_abstain_without_a_dart_or_a_long_thin_shape() {
+        let (empty, _) = bar();
+        assert!(matches!(
+            dart_ends(&empty, &empty, 30, 80, 4),
+            Err(TipError::TooFewPixels { .. })
+        ));
+        let mut blob = empty.clone();
+        for y in 40..60 {
+            for x in 90..110 {
+                blob.data[y * 200 + x] = 20;
+            }
+        }
+        assert!(matches!(
+            dart_ends(&empty, &blob, 30, 80, 4),
+            Err(TipError::NotElongated { .. })
+        ));
+    }
 
     #[test]
     fn luma_downsample_and_mean_preserve_flat_values() {
