@@ -139,7 +139,7 @@ def main():
                 subprocess.run([binary, "--config", str(Path(directory) / "second.toml"), "config", "init", "--defaults"], check=True, capture_output=True)
                 conflict = subprocess.run([binary, "--config", str(Path(directory) / "second.toml"), "--port", str(port), "run"], capture_output=True, text=True, timeout=5)
                 assert conflict.returncode != 0 and "cannot listen" in conflict.stderr
-                assert "not_implemented" in cli("calibrate", "--all", ok=False)["error"]
+                assert "calibration needs cameras" in cli("calibrate", "--all", ok=False)["error"]
                 assert cli("config", "validate")["valid"]
                 assert cli("cameras", "list")["capture_available"] is False
 
@@ -182,7 +182,7 @@ def main():
                     def connected():
                         if select.select([master], [], [], 0.1)[0]:
                             rendered.extend(os.read(master, 65536))
-                        return b"BOARD & DETECTION" in rendered
+                        return b"BOARD & DETECTION" in rendered and b"State:" in rendered
                     eventually(connected)
                     def settle_ui():
                         # A successful API response can precede the TUI's next draw.
@@ -209,12 +209,12 @@ def main():
                     os.write(master, b"s")
                     eventually(lambda: cli("status")["state"] == "running")
                     settle_ui()
-                    click(5, 4)  # Board name row.
+                    click(5, 8)  # Board name row, below the controls and state.
                     os.write(master, b"\x15Mouse room")
                     click(20, 17)  # Save in the editor.
                     eventually(lambda: cli("status")["config"]["board"]["name"] == "Mouse room")
                     settle_ui()
-                    click(5, 5)  # Speed dropdown.
+                    click(5, 11)  # Detection speed dropdown.
                     settle_ui()
                     os.write(master, b"\x1b[C\r")
                     eventually(lambda: cli("status")["config"]["detection"]["speed"] == "high")
@@ -224,13 +224,7 @@ def main():
                     os.write(master, b"\r")
                     eventually(lambda: len(cli("status")["config"]["cameras"]) == 2)
                     settle_ui()
-                    # Select the second camera using the same dashboard, then rotate it.
-                    os.write(master, b"\x1b[B" * 9 + b"\x1b[C" * 3 + b"\r")
-                    time.sleep(0.1)
-                    os.write(master, b"\x1b[C\r")
-                    eventually(lambda: cli("status")["config"]["cameras"][1]["rotation"] == 90)
-                    settle_ui()
-                    click(3, 11)  # First dart, below board settings.
+                    click(3, 16)  # First dart, below board settings.
                     settle_ui()
                     os.write(master, b"\x15D20\r")
                     corrected = eventually(lambda: (state if (state := cli("status"))["throws"][0]["label"] == "D20" else None))
@@ -266,8 +260,15 @@ def main():
                 assert restarted["config"]["board"]["id"] == initial["config"]["board"]["id"]
                 assert restarted["session_id"] != initial["session_id"]
                 assert restarted["physical_darts"] is None
+                assert restarted["mode"] == "live"
                 assert "disabled" in cli("demo", "throw", "T20", ok=False)["error"]
-                print("PASS: init/reset and setup cancellation, CLI, TUI keyboard/mouse editing and restoration, native events, identity persistence, demo isolation, port/ownership conflicts, and streaming shutdown")
+                # Live mode opens cameras only while running; calibration and
+                # snapshots explain what is missing instead of failing silently.
+                assert "start the board" in cli("calibrate", "--all", ok=False)["error"]
+                snapshot_error = cli("cameras", "snapshot", "--camera", "1", "--out", str(Path(directory) / "frame.jpg"), ok=False)["error"]
+                assert "not streaming" in snapshot_error
+                assert not (Path(directory) / "frame.jpg").exists()
+                print("PASS: init/reset and setup cancellation, CLI, TUI keyboard/mouse editing and restoration, native events, identity persistence, demo isolation, live-mode calibration and snapshot guards, port/ownership conflicts, and streaming shutdown")
             except BaseException:
                 log.flush()
                 log.seek(0)

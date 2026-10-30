@@ -42,6 +42,9 @@ pub fn initialize_for_run(
         "Configuration saved: {} · {}:{} · board ID {}. Starting the daemon now.",
         config.board.name, config.server.bind, config.server.port, config.board.id
     );
+    eprintln!(
+        "Next: assign the cameras (oche-core remote), start the board, then press Calibrate all. It will ask once for a dart thrown at the 20."
+    );
     Ok(())
 }
 

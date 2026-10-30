@@ -77,12 +77,34 @@ impl Client {
         .await
     }
 
+    /// The latest JPEG frame of a streaming camera.
+    pub async fn camera_snapshot(&self, slot: u8) -> Result<Vec<u8>> {
+        let response = self
+            .http
+            .get(format!("{}/cameras/{slot}/snapshot", self.endpoint))
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Self::decode::<Snapshot>(response)
+                .await
+                .map(|_| unreachable!());
+        }
+        Ok(response.bytes().await?.to_vec())
+    }
+
     pub async fn command(&self, command: &Command) -> Result<Snapshot> {
+        // Calibration measures every camera's frame on the board's machine.
+        let timeout = if matches!(command, Command::Calibrate { .. }) {
+            Duration::from_secs(90)
+        } else {
+            Duration::from_secs(3)
+        };
         Self::decode(
             self.http
                 .post(format!("{}/command", self.endpoint))
                 .json(command)
-                .timeout(Duration::from_secs(3))
+                .timeout(timeout)
                 .send()
                 .await?,
         )

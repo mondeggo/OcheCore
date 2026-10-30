@@ -5,7 +5,10 @@ mod tui;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use client::Client;
-use oche_domain::{Command, ConfigChange, DEFAULT_PORT, Mode, NativeEvent, Snapshot};
+use oche_domain::{
+    CalibrationRecord, CameraState, Command, ConfigChange, DEFAULT_PORT, Mode, NativeEvent,
+    Snapshot,
+};
 use oche_engine::{
     Engine,
     storage::{self, Store},
@@ -51,8 +54,11 @@ enum Action {
         #[arg(long)]
         init_bind: Option<IpAddr>,
         /// Enable explicitly synthetic throws and takeout; no cameras are opened.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "no_capture")]
         demo: bool,
+        /// Run controls only and never open cameras.
+        #[arg(long)]
+        no_capture: bool,
     },
     /// Open the interactive terminal UI for a local or remote daemon.
     Remote,
@@ -83,13 +89,17 @@ enum Action {
     },
     /// Report service capabilities and configuration health.
     Doctor,
-    /// Reserved calibration control; currently reports not implemented.
+    /// Measure the board and calibrate cameras from their live frames. The
+    /// board must be empty, lit, and running; set cameras.N.hint first.
     Calibrate {
         #[arg(long, conflicts_with = "all", required_unless_present = "all", value_parser = clap::value_parser!(u8).range(1..=4))]
         camera: Option<u8>,
         #[arg(long)]
         all: bool,
     },
+    /// Find the 20 in every camera: with an empty board, follow the prompt to
+    /// throw one dart at the 20. The hints are stored until you change them.
+    Orient,
     /// Inject synthetic observations into a daemon started with run --demo.
     Demo {
         #[command(subcommand)]
@@ -126,6 +136,14 @@ enum CameraAction {
     Inspect {
         #[arg(long, value_parser = clap::value_parser!(u8).range(1..=4))]
         camera: u8,
+    },
+    /// Save a streaming camera's latest frame as JPEG, e.g. to find the pixel
+    /// of the 20 segment for cameras.N.hint.
+    Snapshot {
+        #[arg(long, value_parser = clap::value_parser!(u8).range(1..=4))]
+        camera: u8,
+        #[arg(long)]
+        out: std::path::PathBuf,
     },
 }
 
@@ -211,7 +229,12 @@ async fn execute(args: Args) -> Result<()> {
             path
         );
     }
-    if let Some(Action::Run { demo, init_bind }) = args.command {
+    if let Some(Action::Run {
+        demo,
+        no_capture,
+        init_bind,
+    }) = args.command
+    {
         if args.host != "127.0.0.1" {
             bail!(
                 "--host is for management commands; use --bind to select the service listen address"
@@ -227,14 +250,39 @@ async fn execute(args: Args) -> Result<()> {
             args.port.unwrap_or(config.server.port),
         );
         let listener = tokio::net::TcpListener::bind(address).await.with_context(|| format!("cannot listen on {address}; another service may own this port. Use --port to choose another"))?;
-        let mode = if demo { Mode::Demo } else { Mode::ControlOnly };
+        let mode = if demo {
+            Mode::Demo
+        } else if no_capture {
+            Mode::ControlOnly
+        } else {
+            Mode::Live
+        };
         eprintln!(
             "OcheCore listening on http://{address} ({mode:?}); config: {}",
             path.display()
         );
-        eprintln!("Capture, vision, calibration, and Autodarts compatibility are unavailable.");
-        let service = oche_api::Service::new(Engine::new(config, store, mode, address.to_string()));
-        oche_api::serve(listener, service, shutdown()).await?;
+        eprintln!(
+            "{}",
+            match mode {
+                Mode::Live =>
+                    "Cameras open while the board is running. Autodarts compatibility is unavailable.",
+                _ => "Cameras are not opened in this mode. Autodarts compatibility is unavailable.",
+            }
+        );
+        let engine = std::sync::Arc::new(std::sync::Mutex::new(Engine::new(
+            config,
+            store,
+            mode,
+            address.to_string(),
+        )));
+        let pipeline =
+            (mode == Mode::Live).then(|| oche_engine::live::Pipeline::spawn(engine.clone()));
+        let service = oche_api::Service::shared(engine, pipeline.clone());
+        let result = oche_api::serve(listener, service, shutdown()).await;
+        if let Some(pipeline) = pipeline {
+            tokio::task::spawn_blocking(move || pipeline.shutdown()).await?;
+        }
+        result?;
         return Ok(());
     }
     if let Some(Action::Config {
@@ -286,8 +334,32 @@ async fn execute(args: Args) -> Result<()> {
             )?;
         }
         Some(Action::Wake) => show(&client.command(&Command::Wake).await?, args.json)?,
+        Some(Action::Orient) => orient(&client, args.json).await?,
         Some(Action::Calibrate { camera, .. }) => {
-            client.command(&Command::Calibrate { camera }).await?;
+            // Calibration needs to know where the 20 is. Ask once; later runs
+            // reuse the stored reference and only realign the cameras.
+            if !client
+                .snapshot()
+                .await?
+                .cameras_needing_orientation()
+                .is_empty()
+            {
+                if !std::io::stdin().is_terminal() {
+                    anyhow::bail!(
+                        "the 20 is not recorded yet; run `oche-core orient` in a terminal first"
+                    );
+                }
+                orient(&client, args.json).await?;
+            }
+            if !args.json {
+                eprintln!("Calibrating; keep the board empty and still…");
+            }
+            let snapshot = client.command(&Command::Calibrate { camera }).await?;
+            if args.json {
+                print_json(&snapshot.calibration)?;
+            } else if let Some(record) = &snapshot.calibration {
+                print_calibration(record);
+            }
         }
         Some(Action::Demo { action }) => {
             let command = match action {
@@ -320,6 +392,23 @@ async fn execute(args: Args) -> Result<()> {
                 args.json,
             )?;
         }
+        Some(Action::Cameras {
+            action: CameraAction::Snapshot { camera, out },
+        }) => {
+            let jpeg = client.camera_snapshot(camera).await?;
+            std::fs::write(&out, &jpeg).with_context(|| format!("write {}", out.display()))?;
+            if args.json {
+                print_json(
+                    &serde_json::json!({"camera": camera, "path": out, "bytes": jpeg.len()}),
+                )?;
+            } else {
+                println!(
+                    "Saved camera {camera} frame to {} ({} bytes). Note the pixel x,y of the 20 segment and run: oche-core config set cameras.{camera}.hint X,Y",
+                    out.display(),
+                    jpeg.len()
+                );
+            }
+        }
         Some(Action::Cameras { action }) => {
             if matches!(action, CameraAction::Available) {
                 let inventory = client.cameras().await?;
@@ -345,25 +434,34 @@ async fn execute(args: Args) -> Result<()> {
             let cameras = snapshot
                 .config
                 .cameras
-                .into_iter()
+                .iter()
                 .filter(|c| match action {
                     CameraAction::List => true,
-                    CameraAction::Available => unreachable!(),
+                    CameraAction::Available | CameraAction::Snapshot { .. } => unreachable!(),
                     CameraAction::Inspect { camera } => c.slot == camera,
                 })
+                .cloned()
                 .collect::<Vec<_>>();
             if cameras.is_empty() {
                 bail!("camera slot is not configured");
             }
             if args.json {
-                print_json(
-                    &serde_json::json!({"capture_available": false, "calibration_available": false, "requested": cameras}),
-                )?;
+                print_json(&serde_json::json!({
+                    "capture_available": snapshot.capabilities.capture,
+                    "calibration_available": snapshot.capabilities.calibration,
+                    "requested": cameras,
+                    "status": snapshot.cameras,
+                }))?;
             } else {
-                println!("Requested slots only — capture and calibration are not implemented.");
                 for c in cameras {
+                    let calibrated = snapshot
+                        .calibration
+                        .as_ref()
+                        .and_then(|r| r.for_camera(&c))
+                        .map(|cal| format!("calibrated ({:.2} mm)", cal.wire_rms_mm))
+                        .unwrap_or_else(|| "not calibrated".into());
                     println!(
-                        "{}  {}  {}x{} @ {} FPS  rotation {}°",
+                        "{}  {}  {}x{} @ {} FPS  rotation {}°  exposure {}  hint {}\n   {}  ·  {}",
                         c.slot,
                         if c.device.is_empty() {
                             "unassigned"
@@ -373,7 +471,11 @@ async fn execute(args: Args) -> Result<()> {
                         c.width,
                         c.height,
                         c.fps,
-                        c.rotation
+                        c.rotation,
+                        c.exposure.map_or("auto".into(), |e| e.to_string()),
+                        c.hint.map_or("none".into(), |[x, y]| format!("{x},{y}")),
+                        camera_state(&snapshot, c.slot),
+                        calibrated
                     );
                 }
             }
@@ -386,8 +488,12 @@ async fn execute(args: Args) -> Result<()> {
                 )?;
             } else {
                 show(&snapshot, false)?;
+                let yes_no = |v: bool| if v { "yes" } else { "no" };
                 println!(
-                    "Configuration: valid\nNative API: reachable\nCapture / calibration / vision / Autodarts compatibility: not implemented"
+                    "Configuration: valid\nNative API: reachable\nCapture: {} | calibration: {} | detection: {} | Autodarts compatibility: not implemented",
+                    yes_no(snapshot.capabilities.capture),
+                    yes_no(snapshot.capabilities.calibration),
+                    yes_no(snapshot.capabilities.vision)
                 );
             }
         }
@@ -407,6 +513,21 @@ async fn execute(args: Args) -> Result<()> {
 
 fn print_json(value: &impl serde::Serialize) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(value)?);
+    Ok(())
+}
+
+/// Records where the 20 is in every camera: remember the empty board, wait for
+/// one dart thrown at the 20, then locate it.
+async fn orient(client: &Client, json: bool) -> Result<()> {
+    client.command(&Command::OrientBegin).await?;
+    eprintln!(
+        "First setup: the board is empty and remembered. Throw ONE dart at the 20 (aim for\nthe middle of the segment), let it settle, then press Enter."
+    );
+    std::io::stdin().read_line(&mut String::new())?;
+    show(&client.command(&Command::OrientFinish).await?, json)?;
+    if !json {
+        eprintln!("The 20 is recorded. Remove the dart and keep the board empty for calibration.");
+    }
     Ok(())
 }
 
@@ -438,18 +559,62 @@ fn show(snapshot: &Snapshot, json: bool) -> Result<()> {
             .map(|n| n.to_string())
             .unwrap_or_else(|| "unknown".into())
     );
+    let activity = snapshot.activity();
+    println!("Board: {} — {}", activity.label, activity.detail);
     println!(
-        "Vision: unavailable{}",
-        if snapshot.mode == Mode::Demo {
-            " (synthetic input enabled)"
-        } else {
-            ""
+        "Detection: {}",
+        match snapshot.mode {
+            Mode::Demo => "synthetic input (demo)".to_string(),
+            Mode::ControlOnly => "off (controls only)".to_string(),
+            Mode::Live if !snapshot.capabilities.calibration => {
+                "needs calibration (oche-core calibrate --all)".to_string()
+            }
+            Mode::Live if !snapshot.capabilities.vision => {
+                "needs at least two calibrated cameras".to_string()
+            }
+            Mode::Live => format!(
+                "live at {} analyses/s per camera",
+                snapshot.config.detection.speed.analysis_hz()
+            ),
         }
     );
+    for camera in &snapshot.config.cameras {
+        println!(
+            "Camera {}: {}",
+            camera.slot,
+            camera_state(snapshot, camera.slot)
+        );
+    }
     if snapshot.restart_required {
         println!("Listen settings saved; restart the daemon to apply them.");
     }
     Ok(())
+}
+
+fn camera_state(snapshot: &Snapshot, slot: u8) -> String {
+    match snapshot.cameras.iter().find(|c| c.slot == slot) {
+        Some(c) => match c.state {
+            CameraState::Streaming => format!("streaming {:.1} FPS", c.fps),
+            CameraState::Starting => "starting".into(),
+            CameraState::Off => "off".into(),
+            CameraState::Error => format!("error: {}", c.error.as_deref().unwrap_or("unknown")),
+        },
+        None => "off".into(),
+    }
+}
+
+fn print_calibration(record: &CalibrationRecord) {
+    let b = &record.board;
+    println!(
+        "Board (wire centres, mm): bull {:.2} · 25 {:.2} · treble {:.2}–{:.2} · double {:.2}–{:.2}",
+        b.inner_bull, b.outer_bull, b.treble_inner, b.treble_outer, b.double_inner, b.double_outer
+    );
+    for camera in &record.cameras {
+        println!(
+            "Camera {}: wire fit {:.2} mm RMS over {} points",
+            camera.slot, camera.wire_rms_mm, camera.wire_points
+        );
+    }
 }
 
 async fn follow_events(client: &Client, json: bool, count: Option<u64>) -> Result<()> {

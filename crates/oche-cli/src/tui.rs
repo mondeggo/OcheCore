@@ -5,12 +5,15 @@ use crossterm::event::{
     KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use futures_util::StreamExt;
-use oche_domain::{CameraInventory, Command, ConfigChange, Mode, NativeEvent, Snapshot, Speed};
+use oche_domain::{
+    ActivityLevel, CameraDevice, CameraInventory, CameraState, Command, ConfigChange, Mode,
+    NativeEvent, ServiceState, Snapshot, Speed,
+};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::Line,
+    text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 use std::time::Duration;
@@ -19,13 +22,34 @@ use tokio::sync::{mpsc, watch};
 const TABS: [&str; 2] = ["1 Board", "2 Events"];
 const CONFIG_FIELDS: [&str; 6] = [
     "board.name",
-    "detection.speed",
-    "detection.standby_seconds",
     "server.bind",
     "server.port",
+    "detection.speed",
+    "detection.standby_seconds",
     "cameras.count",
 ];
-const CAMERA_FIELDS: [&str; 5] = ["device", "resolution", "fps", "rotation", "calibrate"];
+const CONFIG_LABELS: [&str; 6] = [
+    "Name",
+    "IP address",
+    "Port",
+    "Detection speed",
+    "Standby after (s)",
+    "Cameras",
+];
+/// Fields with a button on each camera row; resolution and FPS are edited for
+/// all cameras at once, the 20 reference by `orient`, and the rest by `config set`.
+const CAMERA_VISIBLE: [usize; 2] = [0, 4];
+const CAMERA_FIELDS: [&str; 7] = [
+    "device",
+    "resolution",
+    "fps",
+    "rotation",
+    "calibrate",
+    "exposure",
+    "hint",
+];
+/// Manual exposure presets in 100 µs units; "auto" keeps the camera's own.
+const EXPOSURES: [&str; 8] = ["auto", "50", "75", "100", "150", "200", "300", "500"];
 const CAMERA_START: usize = CONFIG_FIELDS.len() + 3;
 
 enum Request {
@@ -59,6 +83,8 @@ struct Ui {
     notice: String,
     scroll: usize,
     follow_selection: bool,
+    /// The board was remembered empty; the next press finds the thrown dart.
+    orienting: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -290,6 +316,25 @@ fn handle_key(ui: &mut Ui, view: &View, key: KeyEvent, tx: &mpsc::Sender<Request
                         expected_revision,
                         expected_session_id,
                     })
+                } else if let Some(field) = editor.key.strip_prefix("cameras.*.") {
+                    let mut queued = 0;
+                    for camera in view
+                        .snapshot
+                        .iter()
+                        .flat_map(|s| &s.config.cameras)
+                        .filter(|c| !c.device.is_empty())
+                    {
+                        let change = ConfigChange {
+                            key: format!("cameras.{}.{field}", camera.slot),
+                            value: editor.value.clone(),
+                            expected_revision: None,
+                        };
+                        if tx.try_send(Request::Configure(change)).is_ok() {
+                            queued += 1;
+                        }
+                    }
+                    ui.notice = format!("{field} change queued for {queued} cameras");
+                    return;
                 } else {
                     Request::Configure(ConfigChange {
                         key: editor.key,
@@ -369,7 +414,7 @@ fn handle_key(ui: &mut Ui, view: &View, key: KeyEvent, tx: &mpsc::Sender<Request
             return;
         }
         KeyCode::Char('?') => {
-            ui.notice = "Tab: Board/Events | arrows: select | Enter: edit | +/-: cameras | PgUp/PgDn: scroll".into();
+            ui.notice = "Tab: Board/Events | arrows: select | Enter: edit | s/x/r/w: start/stop/reset/wake | c: calibrate | o: find the 20 again | +/-: cameras".into();
             return;
         }
         _ => {}
@@ -392,10 +437,10 @@ fn handle_key(ui: &mut Ui, view: &View, key: KeyEvent, tx: &mpsc::Sender<Request
             ui.follow_selection = true;
         }
         KeyCode::Left if ui.tab == 0 && ui.selected >= CAMERA_START => {
-            ui.camera_field = (ui.camera_field + CAMERA_FIELDS.len() - 1) % CAMERA_FIELDS.len()
+            ui.camera_field = step_field(ui.camera_field, false)
         }
         KeyCode::Right if ui.tab == 0 && ui.selected >= CAMERA_START => {
-            ui.camera_field = (ui.camera_field + 1) % CAMERA_FIELDS.len()
+            ui.camera_field = step_field(ui.camera_field, true)
         }
         KeyCode::Enter if ui.tab == 0 => {
             if (CONFIG_FIELDS.len()..CAMERA_START).contains(&ui.selected) {
@@ -419,13 +464,8 @@ fn handle_key(ui: &mut Ui, view: &View, key: KeyEvent, tx: &mpsc::Sender<Request
                 return;
             }
             if ui.selected >= CAMERA_START && ui.camera_field == 4 {
-                send(
-                    ui,
-                    tx,
-                    Request::Command(Command::Calibrate {
-                        camera: Some((ui.selected - CAMERA_START + 1) as u8),
-                    }),
-                );
+                let camera = (ui.selected - CAMERA_START + 1) as u8;
+                calibrate_or_orient(ui, snapshot, tx, Some(camera));
                 return;
             }
             match editable(snapshot, ui, &view.inventory) {
@@ -465,6 +505,17 @@ fn handle_key(ui: &mut Ui, view: &View, key: KeyEvent, tx: &mpsc::Sender<Request
         KeyCode::Char('x') => send(ui, tx, Request::Command(Command::Stop)),
         KeyCode::Char('r') => send(ui, tx, Request::Command(Command::Reset)),
         KeyCode::Char('w') => send(ui, tx, Request::Command(Command::Wake)),
+        KeyCode::Char(ch @ ('u' | 'f')) if ui.tab == 0 => {
+            let field = if ch == 'u' { "resolution" } else { "fps" };
+            match all_cameras_editor(snapshot, &view.inventory, field) {
+                Ok(editor) => ui.editor = Some(editor),
+                Err(message) => ui.notice = message,
+            }
+        }
+        KeyCode::Char('o') if snapshot.mode == Mode::Live => orient_step(ui, tx),
+        KeyCode::Char('c') if snapshot.mode == Mode::Live => {
+            calibrate_or_orient(ui, snapshot, tx, None)
+        }
         KeyCode::Char('t') if snapshot.mode == Mode::Demo => send(
             ui,
             tx,
@@ -481,6 +532,117 @@ fn handle_key(ui: &mut Ui, view: &View, key: KeyEvent, tx: &mpsc::Sender<Request
     }
 }
 
+/// Choices every assigned camera supports, applied to each of them on save.
+fn all_cameras_editor(
+    snapshot: &Snapshot,
+    inventory: &CameraInventory,
+    field: &str,
+) -> Result<Editor, String> {
+    let cameras: Vec<_> = snapshot
+        .config
+        .cameras
+        .iter()
+        .filter(|c| !c.device.is_empty())
+        .collect();
+    if cameras.is_empty() {
+        return Err("Assign a device to a camera first".into());
+    }
+    let mut common: Option<Vec<String>> = None;
+    for camera in &cameras {
+        let Some(device) = inventory.devices.iter().find(|d| d.matches(&camera.device)) else {
+            return Err(format!("camera {} is not in the inventory", camera.slot));
+        };
+        let own: Vec<String> = device
+            .modes
+            .iter()
+            .filter(|m| m.width <= 8192 && m.height <= 8192)
+            .filter(|m| {
+                field == "resolution" || (m.width, m.height) == (camera.width, camera.height)
+            })
+            .flat_map(|m| {
+                if field == "resolution" {
+                    vec![format!("{}x{}", m.width, m.height)]
+                } else {
+                    m.fps.iter().map(u32::to_string).collect()
+                }
+            })
+            .collect();
+        common = Some(match common {
+            None => own,
+            Some(previous) => previous.into_iter().filter(|v| own.contains(v)).collect(),
+        });
+    }
+    let mut choices = common.unwrap_or_default();
+    if field == "fps" {
+        choices.sort_by_key(|v| v.parse::<u32>().unwrap_or(0));
+    } else {
+        choices.sort();
+    }
+    choices.dedup();
+    let Some(first) = choices.first().cloned() else {
+        return Err(format!("No {field} is supported by all cameras"));
+    };
+    let current = if field == "resolution" {
+        format!("{}x{}", cameras[0].width, cameras[0].height)
+    } else {
+        cameras[0].fps.to_string()
+    };
+    Ok(Editor {
+        key: format!("cameras.*.{field}"),
+        value: if choices.contains(&current) {
+            current
+        } else {
+            first
+        },
+        choices,
+        revision: snapshot.revision,
+        correction: None,
+    })
+}
+
+fn step_field(current: usize, forward: bool) -> usize {
+    let at = CAMERA_VISIBLE
+        .iter()
+        .position(|&f| f == current)
+        .unwrap_or(0);
+    let next = if forward {
+        (at + 1) % CAMERA_VISIBLE.len()
+    } else {
+        (at + CAMERA_VISIBLE.len() - 1) % CAMERA_VISIBLE.len()
+    };
+    CAMERA_VISIBLE[next]
+}
+
+/// One step of finding the 20: remember the empty board, then, after a dart
+/// is thrown at the 20, locate it in every camera and store the hints.
+fn orient_step(ui: &mut Ui, tx: &mpsc::Sender<Request>) {
+    if ui.orienting {
+        ui.orienting = false;
+        send(ui, tx, Request::Command(Command::OrientFinish));
+        ui.notice = "Finding the dart… if the 20 is recorded, press Calibrate all again".into();
+    } else {
+        ui.orienting = true;
+        send(ui, tx, Request::Command(Command::OrientBegin));
+        ui.notice = "Board remembered empty. Throw ONE dart at the 20, let it settle, then press Calibrate all again".into();
+    }
+}
+
+/// Calibration needs to know where the 20 is. The first time (no stored hint
+/// and no calibration), or while an orientation is waiting for its dart, the
+/// button walks through that; afterwards it only realigns the cameras.
+fn calibrate_or_orient(
+    ui: &mut Ui,
+    snapshot: &Snapshot,
+    tx: &mpsc::Sender<Request>,
+    camera: Option<u8>,
+) {
+    if ui.orienting || !snapshot.cameras_needing_orientation().is_empty() {
+        orient_step(ui, tx);
+    } else {
+        send(ui, tx, Request::Command(Command::Calibrate { camera }));
+    }
+}
+
 fn editable(
     snapshot: &Snapshot,
     ui: &Ui,
@@ -490,6 +652,14 @@ fn editable(
     if ui.selected >= CAMERA_START {
         let camera = &c.cameras[ui.selected - CAMERA_START];
         let field = CAMERA_FIELDS[ui.camera_field];
+        let key = format!("cameras.{}.{}", camera.slot, field);
+        if field == "hint" {
+            // Free text: the pixel x,y of the 20 segment, or empty to clear.
+            let value = camera
+                .hint
+                .map_or(String::new(), |[x, y]| format!("{x},{y}"));
+            return Ok((key, value, vec![]));
+        }
         let device = inventory
             .devices
             .iter()
@@ -527,9 +697,10 @@ fn editable(
                 })
                 .unwrap_or_default(),
             "rotation" => vec!["0".into(), "90".into(), "180".into(), "270".into()],
+            "exposure" => EXPOSURES.map(String::from).to_vec(),
             _ => vec![],
         };
-        if matches!(field, "fps" | "rotation") {
+        if matches!(field, "fps" | "rotation" | "exposure") {
             choices.sort_by_key(|value| value.parse::<u32>().unwrap_or(0));
         } else {
             choices.sort();
@@ -547,6 +718,7 @@ fn editable(
             "device" => camera.device.clone(),
             "resolution" => format!("{}x{}", camera.width, camera.height),
             "fps" => camera.fps.to_string(),
+            "exposure" => camera.exposure.map_or("auto".into(), |e| e.to_string()),
             _ => camera.rotation.to_string(),
         };
         let value = if choices.contains(&current) {
@@ -554,7 +726,7 @@ fn editable(
         } else {
             choices[0].clone()
         };
-        return Ok((format!("cameras.{}.{}", camera.slot, field), value, choices));
+        return Ok((key, value, choices));
     }
     let key = CONFIG_FIELDS[ui.selected];
     let value = config_value(snapshot, key);
@@ -570,6 +742,93 @@ fn editable(
         _ => vec![],
     };
     Ok((key.into(), value, choices))
+}
+
+fn detection_summary(s: &Snapshot) -> String {
+    match s.mode {
+        Mode::Demo => "demo: synthetic throws (t / o keys)".into(),
+        Mode::ControlOnly => "off: controls only (run without --no-capture)".into(),
+        Mode::Live if s.state != ServiceState::Running => "cameras off: start the board (s)".into(),
+        Mode::Live if !s.capabilities.calibration => {
+            "needs calibration: empty the board, then Calibrate all".into()
+        }
+        Mode::Live if !s.capabilities.vision => "needs at least two calibrated cameras".into(),
+        Mode::Live => format!(
+            "live · {} analyses/s per camera · scene {:?}",
+            s.config.detection.speed.analysis_hz(),
+            s.scene
+        ),
+    }
+}
+
+fn camera_summary(s: &Snapshot, index: usize) -> String {
+    let camera = &s.config.cameras[index];
+    let state = match s.cameras.iter().find(|c| c.slot == camera.slot) {
+        Some(c) => match c.state {
+            CameraState::Streaming => format!("streaming {:.1} FPS", c.fps),
+            CameraState::Starting => "starting".into(),
+            CameraState::Off => "off".into(),
+            CameraState::Error => format!("error: {}", c.error.as_deref().unwrap_or("unknown")),
+        },
+        None => "off".into(),
+    };
+    let calibration = s
+        .calibration
+        .as_ref()
+        .and_then(|r| r.for_camera(camera))
+        .map_or("not calibrated".into(), |c| {
+            format!("calibrated, wire fit {:.2} mm", c.wire_rms_mm)
+        });
+    format!("{state} · {calibration}")
+}
+
+/// A camera as the user knows it: its name and the USB port it sits in.
+fn device_label(device: &CameraDevice) -> String {
+    let port = device
+        .aliases
+        .iter()
+        .chain(std::iter::once(&device.path))
+        .find_map(|alias| usb_port(alias));
+    match port {
+        Some(port) => format!("{} · USB {port}", device.name),
+        None => format!("{} · {}", device.name, device.path),
+    }
+}
+
+/// The `0:1.1` of `.../platform-…-usb-0:1.1:1.0-video-index0`.
+fn usb_port(alias: &str) -> Option<String> {
+    let rest = alias.rsplit('/').next()?.split("-usb-").nth(1)?;
+    let ports = rest.split("-video").next()?;
+    Some(ports.strip_suffix(":1.0").unwrap_or(ports).to_string())
+}
+
+/// The resolution or frame rate the assigned cameras share, or "mixed".
+fn common_mode(s: &Snapshot, resolution: bool) -> String {
+    let assigned: Vec<_> = s
+        .config
+        .cameras
+        .iter()
+        .filter(|c| !c.device.is_empty())
+        .collect();
+    let cameras = if assigned.is_empty() {
+        s.config.cameras.iter().collect()
+    } else {
+        assigned
+    };
+    let values: std::collections::BTreeSet<String> = cameras
+        .iter()
+        .map(|c| {
+            if resolution {
+                format!("{}x{}", c.width, c.height)
+            } else {
+                c.fps.to_string()
+            }
+        })
+        .collect();
+    match values.len() {
+        1 => values.into_iter().next().unwrap_or_default(),
+        _ => "mixed".into(),
+    }
 }
 
 fn config_value(s: &Snapshot, key: &str) -> String {
@@ -641,6 +900,8 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, _endpoint: &str) -> Vec<H
     let mut selected_row = 0;
     let mut camera_heading = None;
     let mut darts_row = None;
+    let mut controls_row = None;
+    let mut calibrate_row = None;
     if let Some(error) = &view.error {
         lines.push(Line::raw("OFFLINE — last known state; controls disabled"));
         lines.push(Line::raw(plain(error)));
@@ -685,6 +946,26 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, _endpoint: &str) -> Vec<H
         ));
     } else if let Some(s) = &view.snapshot {
         ui.selected = ui.selected.min(CAMERA_START + s.config.cameras.len() - 1);
+        lines.push(Line::styled("CONTROLS", selection(true)));
+        controls_row = Some(lines.len());
+        lines.push(Line::raw(""));
+        let activity = s.activity();
+        let colour = match activity.level {
+            ActivityLevel::Ready => Color::Green,
+            ActivityLevel::Busy => Color::Yellow,
+            ActivityLevel::Attention => Color::LightMagenta,
+            ActivityLevel::Problem => Color::LightRed,
+            ActivityLevel::Idle => Color::Gray,
+        };
+        lines.push(Line::from(vec![
+            Span::raw("  State: "),
+            Span::styled(
+                activity.label,
+                Style::default().fg(colour).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(format!("  {}", plain(&activity.detail))),
+        ]));
+        lines.push(Line::raw(""));
         lines.push(Line::styled("BOARD & DETECTION SETTINGS", selection(true)));
         for (index, key) in CONFIG_FIELDS.iter().enumerate() {
             if ui.selected == index {
@@ -695,30 +976,42 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, _endpoint: &str) -> Vec<H
                 format!(
                     "{} {:27} {}",
                     if ui.selected == index { "›" } else { " " },
-                    key,
+                    CONFIG_LABELS[index],
                     plain(&config_value(s, key))
                 ),
                 selection(ui.selected == index),
             ));
         }
+        lines.push(Line::raw(""));
         lines.push(Line::styled("DARTS", selection(true)));
         darts_row = Some(lines.len());
         if (CONFIG_FIELDS.len()..CAMERA_START).contains(&ui.selected) {
             selected_row = lines.len();
         }
         lines.push(Line::raw(""));
+        lines.push(Line::raw(format!(
+            "  {:27} {}",
+            "detection",
+            plain(&detection_summary(s))
+        )));
+        lines.push(Line::raw(""));
         camera_heading = Some(lines.len());
         lines.push(Line::styled("CAMERAS", selection(true)));
+        lines.push(Line::raw(""));
         for (index, _) in s.config.cameras.iter().enumerate() {
             if ui.selected == CAMERA_START + index {
                 selected_row = lines.len();
             }
             camera_rows.push((lines.len(), index));
             lines.push(Line::raw(""));
-            if content.width < 100 {
-                lines.push(Line::raw(""));
-            }
+            lines.push(Line::raw(format!(
+                "          {}",
+                plain(&camera_summary(s, index))
+            )));
+            lines.push(Line::raw(""));
         }
+        calibrate_row = Some(lines.len());
+        lines.push(Line::raw(""));
     } else if view.error.is_none() {
         lines.push(Line::raw("Connecting to the native control service…"));
     }
@@ -772,6 +1065,51 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, _endpoint: &str) -> Vec<H
             );
         }
     }
+    if let Some(y) = controls_row.and_then(visible_y) {
+        let mut x = content.x + 2;
+        for (label, key) in [("Start", 's'), ("Stop", 'x'), ("Reset", 'r'), ("Wake", 'w')] {
+            let rect = Rect::new(x, y, label.len() as u16 + 2, 1);
+            button(
+                frame,
+                &mut hits,
+                rect,
+                label,
+                MouseAction::Key(KeyCode::Char(key)),
+                connected,
+                false,
+            );
+            x = rect.right() + 1;
+        }
+    }
+    if let Some(y) = calibrate_row.and_then(visible_y) {
+        let snapshot = view.snapshot.as_ref().unwrap();
+        button(
+            frame,
+            &mut hits,
+            Rect::new(content.x + 10, y, 15, 1),
+            "Calibrate all",
+            MouseAction::Key(KeyCode::Char('c')),
+            connected && snapshot.mode == Mode::Live,
+            false,
+        );
+        let mut x = content.x + 26;
+        for (label, key) in [
+            (format!("Resolution {}", common_mode(snapshot, true)), 'u'),
+            (format!("FPS {}", common_mode(snapshot, false)), 'f'),
+        ] {
+            let rect = Rect::new(x, y, label.chars().count() as u16 + 2, 1);
+            button(
+                frame,
+                &mut hits,
+                rect,
+                &label,
+                MouseAction::Key(KeyCode::Char(key)),
+                connected,
+                false,
+            );
+            x = rect.right() + 1;
+        }
+    }
     if let Some(y) = darts_row.and_then(visible_y) {
         let snapshot = view.snapshot.as_ref().unwrap();
         let width = (content.width / 3).min(22);
@@ -817,18 +1155,7 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, _endpoint: &str) -> Vec<H
                 .devices
                 .iter()
                 .find(|d| d.matches(&c.device))
-                .map(|d| {
-                    format!(
-                        "{} {}",
-                        d.aliases
-                            .first()
-                            .unwrap_or(&d.path)
-                            .rsplit('/')
-                            .next()
-                            .unwrap_or(""),
-                        d.name
-                    )
-                })
+                .map(device_label)
                 .unwrap_or_else(|| {
                     if c.device.is_empty() {
                         "Select camera".into()
@@ -836,16 +1163,14 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, _endpoint: &str) -> Vec<H
                         c.device.clone()
                     }
                 });
-            let device_width = if content.width >= 100 {
-                26
-            } else {
-                content.width.saturating_sub(30).min(35)
-            };
+            let device_width = (plain(&label).chars().count() as u16 + 2)
+                .max(30)
+                .min(content.width.saturating_sub(10 + 1 + 11 + 1));
             button(
                 frame,
                 &mut hits,
                 Rect::new(content.x + 10, y, device_width, 1),
-                &format!("{} v", plain(&label)),
+                &plain(&label),
                 MouseAction::CameraField(index, 0),
                 connected,
                 ui.selected == CAMERA_START + index && ui.camera_field == 0,
@@ -853,37 +1178,12 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, _endpoint: &str) -> Vec<H
             button(
                 frame,
                 &mut hits,
-                Rect::new(content.x + 11 + device_width, y, 17, 1),
-                "Calibrate (N/A)",
+                Rect::new(content.x + 11 + device_width, y, 11, 1),
+                "Calibrate",
                 MouseAction::CameraField(index, 4),
-                connected,
-                false,
+                connected && snapshot.mode == Mode::Live,
+                ui.selected == CAMERA_START + index && ui.camera_field == 4,
             );
-        }
-        let (parameter_row, offset) = if content.width >= 100 {
-            (row, 55)
-        } else {
-            (row + 1, 10)
-        };
-        if let Some(y) = visible_y(parameter_row) {
-            let mut x = content.x + offset;
-            for (field, label) in [
-                (1, format!("{}x{} v", c.width, c.height)),
-                (2, format!("{} FPS v", c.fps)),
-                (3, format!("{}° v", c.rotation)),
-            ] {
-                let width = label.chars().count() as u16 + 2;
-                button(
-                    frame,
-                    &mut hits,
-                    Rect::new(x, y, width.min(content.right().saturating_sub(x)), 1),
-                    &label,
-                    MouseAction::CameraField(index, field),
-                    connected,
-                    ui.selected == CAMERA_START + index && ui.camera_field == field,
-                );
-                x += width + 1;
-            }
         }
     }
     // Show only feedback, not a permanent control/help panel.
@@ -916,7 +1216,7 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, _endpoint: &str) -> Vec<H
                 Line::raw(""),
                 Line::styled(
                     format!("{}▏", editor.value),
-                    Style::default().fg(Color::Cyan),
+                    Style::default().fg(Color::Yellow),
                 ),
                 Line::raw(if editor.choices.is_empty() {
                     "Type / Backspace · Ctrl-U clear"
@@ -951,7 +1251,7 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, _endpoint: &str) -> Vec<H
                         .devices
                         .iter()
                         .find(|d| d.path == *value)
-                        .map(|d| format!("{} · {}", d.aliases.first().unwrap_or(&d.path), d.name))
+                        .map(device_label)
                         .unwrap_or_else(|| value.clone())
                 } else {
                     value.clone()
@@ -1018,10 +1318,10 @@ fn button(
     } else if selected {
         Style::default()
             .fg(Color::Black)
-            .bg(Color::Cyan)
+            .bg(Color::Yellow)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(Color::Cyan).bg(Color::DarkGray)
+        Style::default().fg(Color::Black).bg(Color::Gray)
     };
     frame.render_widget(Paragraph::new(format!(" {label} ")).style(style), area);
     if enabled {
@@ -1032,7 +1332,7 @@ fn button(
 fn selection(selected: bool) -> Style {
     if selected {
         Style::default()
-            .fg(Color::Cyan)
+            .fg(Color::Yellow)
             .add_modifier(Modifier::BOLD)
     } else {
         Style::default()
@@ -1112,11 +1412,17 @@ mod tests {
             "1: —",
             "2: —",
             "3: —",
-            "board.name",
-            "server.port",
+            "Name",
+            "IP address",
+            "Port",
+            "Detection speed",
+            "Cameras",
+            "State:",
             "Camera 1",
             "+ Add",
-            "30 FPS",
+            "CONTROLS",
+            "Start",
+            "Wake",
         ] {
             assert!(text.contains(label), "missing {label}");
         }
@@ -1223,7 +1529,15 @@ mod tests {
 
     #[test]
     fn fourth_camera_scrolls_into_view_and_edit_uses_its_slot() {
-        let view = view(4);
+        let mut view = view(4);
+        // Synthetic enumeration fixture, not evidence of a physical camera.
+        view.inventory.devices.push(oche_domain::CameraDevice {
+            path: "/dev/v4l/by-path/test".into(),
+            aliases: vec![],
+            name: "Fixture camera".into(),
+            modes: vec![],
+            error: None,
+        });
         let mut ui = Ui::default();
         let (tx, mut rx) = mpsc::channel(8);
         for _ in 0..12 {
@@ -1232,15 +1546,15 @@ mod tests {
         let (_, text) = draw(&mut ui, &view, 80, 24);
         assert!(text.contains("Camera 4"));
 
-        click(&mut ui, &view, MouseAction::CameraField(3, 3), &tx);
-        assert_eq!(ui.editor.as_ref().unwrap().key, "cameras.4.rotation");
+        click(&mut ui, &view, MouseAction::CameraField(3, 0), &tx);
+        assert_eq!(ui.editor.as_ref().unwrap().key, "cameras.4.device");
         key(&mut ui, &view, KeyCode::Right, &tx);
         key(&mut ui, &view, KeyCode::Enter, &tx);
         let Request::Configure(change) = rx.try_recv().unwrap() else {
             panic!("expected config");
         };
-        assert_eq!(change.value, "90");
-        assert_eq!(change.key, "cameras.4.rotation");
+        assert_eq!(change.value, "/dev/v4l/by-path/test");
+        assert_eq!(change.key, "cameras.4.device");
     }
 
     #[test]
@@ -1313,5 +1627,67 @@ mod tests {
                 assert!(hits.is_empty());
             }
         }
+    }
+
+    #[test]
+    fn settings_come_in_the_requested_order_with_readable_names() {
+        let view = view(1);
+        let (_, text) = draw(&mut Ui::default(), &view, 110, 40);
+        let at = |label: &str| {
+            text.find(label)
+                .unwrap_or_else(|| panic!("missing {label}"))
+        };
+        assert!(at("Name") < at("IP address"));
+        assert!(at("IP address") < at("Port"));
+        assert!(at("Port") < at("Detection speed"));
+        assert!(at("Detection speed") < at("Cameras"));
+        assert!(
+            !text.contains("set 20 hint"),
+            "the 20 is not set per camera"
+        );
+        assert!(text.contains("Resolution 1280x720") && text.contains("FPS 30"));
+    }
+
+    #[test]
+    fn camera_names_show_the_usb_port() {
+        let device = oche_domain::CameraDevice {
+            path: "/dev/video0".into(),
+            aliases: vec![
+                "/dev/v4l/by-path/platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1.2:1.0-video-index0"
+                    .into(),
+            ],
+            name: "USB Camera".into(),
+            modes: vec![],
+            error: None,
+        };
+        assert_eq!(device_label(&device), "USB Camera · USB 0:1.2");
+    }
+
+    #[test]
+    fn calibrate_asks_for_the_dart_once_then_only_realigns() {
+        let mut snapshot = view(2).snapshot.unwrap();
+        snapshot.config.cameras[0].device = "/dev/video0".into();
+        let mut ui = Ui::default();
+        let (tx, mut rx) = mpsc::channel(8);
+        assert_eq!(snapshot.cameras_needing_orientation(), [1]);
+        calibrate_or_orient(&mut ui, &snapshot, &tx, None);
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            Request::Command(Command::OrientBegin)
+        ));
+        assert!(ui.orienting);
+        calibrate_or_orient(&mut ui, &snapshot, &tx, None);
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            Request::Command(Command::OrientFinish)
+        ));
+        assert!(!ui.orienting);
+        // With the 20 stored, the same button just calibrates.
+        snapshot.config.cameras[0].hint = Some([100.0, 100.0]);
+        calibrate_or_orient(&mut ui, &snapshot, &tx, None);
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            Request::Command(Command::Calibrate { camera: None })
+        ));
     }
 }
