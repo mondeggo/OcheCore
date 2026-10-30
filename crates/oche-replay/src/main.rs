@@ -11,6 +11,7 @@ use oche_calibration::{Homography, refine};
 use oche_domain::board::{BoardDimensions, BoardPoint};
 use oche_replay::{darts, open_session, png};
 use oche_vision::image::RgbImage;
+use oche_vision::live::Event;
 
 const WIRE: [u8; 3] = [255, 230, 0];
 const ANCHOR: [u8; 3] = [0, 255, 255];
@@ -98,13 +99,28 @@ enum Command {
         #[arg(long)]
         out: PathBuf,
     },
-    /// Exploratory dart detection using a calibration report from `calibrate`.
+    /// Replay a session through the live detector, using a calibration report
+    /// from `calibrate`.
     Darts {
         session: PathBuf,
         #[arg(long)]
         calibration: PathBuf,
         #[arg(long)]
         out: PathBuf,
+        /// Analyses per second per camera, as the daemon's detection speed.
+        #[arg(long, default_value_t = 10)]
+        hz: u32,
+        /// Write uncompressed overlay PNGs for each arrival (about 2.6 MB each).
+        #[arg(long)]
+        overlays: bool,
+    },
+    /// Time JPEG decoding and luma conversion on recorded frames.
+    Bench {
+        session: PathBuf,
+        #[arg(long, default_value_t = 1)]
+        camera: u8,
+        #[arg(long, default_value_t = 90)]
+        frames: usize,
     },
     /// Print RGB values of one camera's frame at the given pixels.
     Probe {
@@ -284,6 +300,8 @@ fn main() -> Result<()> {
             session,
             calibration,
             out,
+            hz,
+            overlays,
         } => {
             fs::create_dir_all(&out)?;
             let report: serde_json::Value = serde_json::from_slice(&fs::read(&calibration)?)?;
@@ -300,80 +318,121 @@ fn main() -> Result<()> {
                 }
             }
             let cameras = open_session(&session)?;
-            let settings = darts::Settings::default();
-            let (stills, events) = darts::analyse(&cameras, &homographies, &settings)?;
             let origin = cameras[0].frames[0].timestamp;
-            println!("{} still periods:", stills.len());
-            for s in &stills {
-                println!("  {:6.2}-{:6.2} s", s.start - origin, s.end - origin);
-            }
+            let events = darts::analyse(&cameras, &homographies, hz)?;
             for (n, event) in events.iter().enumerate() {
-                let kind = if event.is_arrival() {
-                    "arrival"
-                } else {
-                    "removal/other"
-                };
-                println!(
-                    "event {n}: {:.2}->{:.2} s {kind}",
-                    event.before.end - origin,
-                    event.after.start - origin
-                );
-                for c in &event.cameras {
-                    let region = c.region.map_or("no region".into(), |(count, axis)| {
-                        format!(
-                            "region {count} px, spread {:.1}/{:.1}",
-                            axis.spread.0, axis.spread.1
-                        )
-                    });
-                    let region = match &c.shaft {
-                        Some(s) => format!(
-                            "{region}, shaft {} slices rms {:.2} px",
-                            s.midpoints.len(),
-                            s.rms_px
-                        ),
-                        None => format!("{region}, no shaft"),
-                    };
-                    println!(
-                        "  cam{}: {} changed px, arrival {:+.1}, {region}, line {}",
-                        c.camera,
-                        c.changed_pixels,
-                        c.arrival_score,
-                        if c.line.is_some() { "yes" } else { "no" }
-                    );
-                }
-                let fused = darts::fuse(event, &settings);
-                let impact = fused.as_ref().ok().map(|i| i.point);
-                match &fused {
-                    Ok(i) => println!(
-                        "  impact {}; sigma {:.1}/{:.1} mm; cameras {:?} rejected {:?} checked {}",
-                        darts::describe(i.point, &board),
-                        i.semi_axes_mm.0,
-                        i.semi_axes_mm.1,
-                        i.cameras,
-                        i.rejected_cameras,
-                        i.consistency_checked
-                    ),
-                    Err(a) => println!("  abstained: {a:?}"),
-                }
-                if let Some(point) = impact {
-                    for line in event.lines() {
+                match event {
+                    Event::Baseline { timestamp } => {
                         println!(
-                            "    cam{} line residual {:.1} mm",
-                            line.camera,
-                            line.line.distance(point)
-                        );
+                            "event {n}: {:.2} s baseline (empty board)",
+                            timestamp - origin
+                        )
                     }
-                }
-                if event.is_arrival() {
-                    for c in &event.cameras {
-                        let image = darts::overlay(c, homographies.get(&c.camera), impact);
-                        fs::write(
-                            out.join(format!("event{n:02}-cam{}.png", c.camera)),
-                            png::encode(&image),
-                        )?;
+                    Event::Disturbance { timestamp } => {
+                        println!("event {n}: {:.2} s disturbance", timestamp - origin)
+                    }
+                    Event::Removal {
+                        timestamp,
+                        changes,
+                        empty,
+                        remaining,
+                        added,
+                    } => {
+                        println!(
+                            "event {n}: {:.2} s removal, board {}; px left {:?} of {:?} added by the visit",
+                            timestamp - origin,
+                            if *empty { "empty" } else { "not empty" },
+                            remaining,
+                            added
+                        );
+                        darts::print_changes(changes);
+                    }
+                    Event::Arrival {
+                        timestamp,
+                        changes,
+                        impact,
+                    } => {
+                        println!("event {n}: {:.2} s arrival", timestamp - origin);
+                        darts::print_changes(changes);
+                        match impact {
+                            Ok(i) => println!(
+                                "  impact {}; sigma {:.1}/{:.1} mm; cameras {:?} rejected {:?} checked {}",
+                                darts::describe(i.point, &board),
+                                i.semi_axes_mm.0,
+                                i.semi_axes_mm.1,
+                                i.cameras,
+                                i.rejected_cameras,
+                                i.consistency_checked
+                            ),
+                            Err(a) => println!("  abstained: {a:?}"),
+                        }
+                        let point = impact.as_ref().ok().map(|i| i.point);
+                        if let Some(point) = point {
+                            for line in changes.iter().filter_map(|c| c.line) {
+                                println!(
+                                    "    cam{} line residual {:.1} mm",
+                                    line.camera,
+                                    line.line.distance(point)
+                                );
+                            }
+                        }
+                        if overlays {
+                            for c in changes {
+                                if let Some(image) =
+                                    darts::overlay(c, homographies.get(&c.slot), point)
+                                {
+                                    fs::write(
+                                        out.join(format!("event{n:02}-cam{}.png", c.slot)),
+                                        png::encode(&image),
+                                    )?;
+                                }
+                            }
+                        }
                     }
                 }
             }
+        }
+        Command::Bench {
+            session,
+            camera,
+            frames,
+        } => {
+            let recording = open_session(&session)?
+                .into_iter()
+                .find(|c| c.camera == camera)
+                .with_context(|| format!("no cam{camera} in session"))?;
+            let chosen: Vec<_> = recording.frames.iter().take(frames).collect();
+            let bytes: Vec<Vec<u8>> = chosen
+                .iter()
+                .map(|f| recording.read(f))
+                .collect::<Result<_>>()?;
+            let start = std::time::Instant::now();
+            let mut decoded = Vec::with_capacity(bytes.len());
+            for b in &bytes {
+                decoded.push(RgbImage::decode_jpeg(b).map_err(anyhow::Error::msg)?);
+            }
+            let decode = start.elapsed();
+            let start = std::time::Instant::now();
+            for image in &decoded {
+                std::hint::black_box(image.luma().downsample(4));
+            }
+            let luma = start.elapsed();
+            let start = std::time::Instant::now();
+            for b in &bytes {
+                std::hint::black_box(
+                    oche_vision::mask::GrayImage::decode_jpeg(b).map_err(anyhow::Error::msg)?,
+                );
+            }
+            let gray = start.elapsed();
+            let n = bytes.len().max(1) as f64;
+            println!(
+                "{} frames, one thread: RGB decode {:.1} ms, luma+downsample {:.1} ms, \
+                 direct luma decode {:.1} ms per frame",
+                bytes.len(),
+                decode.as_secs_f64() * 1000.0 / n,
+                luma.as_secs_f64() * 1000.0 / n,
+                gray.as_secs_f64() * 1000.0 / n
+            );
         }
         Command::Probe {
             session,
