@@ -241,9 +241,12 @@ impl Pipeline {
             // centre is the tip side; both ends are used when they agree.
             let distance =
                 |(x, y): (f64, f64)| (x - detection.centre.x).hypot(y - detection.centre.y);
-            let tip_side = usize::from(distance(found.ends[1]) < distance(found.ends[0]));
+            let tip_side = found
+                .tip
+                .unwrap_or_else(|| usize::from(distance(found.ends[1]) < distance(found.ends[0])));
             let wedge = match wedges {
-                [Some(a), Some(b)] if a == b => a,
+                // A flight in view says which end is the tip, so use that end alone.
+                [Some(a), Some(b)] if a == b && found.tip.is_none() => a,
                 wedges => {
                     wedges[tip_side].ok_or_else(|| failed("the dart is off the board".into()))?
                 }

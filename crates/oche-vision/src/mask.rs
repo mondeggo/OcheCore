@@ -161,12 +161,58 @@ impl std::fmt::Display for TipError {
 }
 
 /// The two ends of the visible part of the largest object that arrived
-/// between two frames, in pixels. Which end is the tip is not decided here: a
-/// black steel tip is invisible on a black board and the flight may be out of
-/// frame, so width is no guide.
+/// between two frames, in pixels. A black steel tip is invisible on a black
+/// board and the flight may be out of frame, so width is no guide to which end
+/// is the tip; `tip` is only set when a flight in view settles it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DartEnds {
     pub ends: [(f64, f64); 2],
+    /// Index into `ends` of the tip: the end far from a visible flight.
+    pub tip: Option<usize>,
+}
+
+/// Structures narrower than twice this are not a flight (a barrel is ~10 px).
+const FLIGHT_OPENING: usize = 10;
+const MIN_FLIGHT_PIXELS: usize = 300;
+/// The barrel must reach this far past the flight's own radius.
+const MIN_BARREL_PX: f64 = 20.0;
+
+/// Centroid and radius of the wide, solid part of a silhouette (the flight),
+/// found by morphological opening: the barrel and shaft are too thin to survive.
+fn flight_of(pixels: &[(usize, usize)]) -> Option<((f64, f64), f64)> {
+    let radius = FLIGHT_OPENING;
+    let x0 = pixels.iter().map(|p| p.0).min()?;
+    let y0 = pixels.iter().map(|p| p.1).min()?;
+    let x1 = pixels.iter().map(|p| p.0).max()?;
+    let y1 = pixels.iter().map(|p| p.1).max()?;
+    let (w, h) = (x1 - x0 + 1 + 2 * radius, y1 - y0 + 1 + 2 * radius);
+    let mut solid = vec![false; w * h];
+    for &(x, y) in pixels {
+        solid[(y - y0 + radius) * w + (x - x0 + radius)] = true;
+    }
+    let outside: Vec<bool> = solid.iter().map(|v| !v).collect();
+    let eroded: Vec<bool> = dilate(&outside, w, h, radius)
+        .into_iter()
+        .map(|v| !v)
+        .collect();
+    let opened = dilate(&eroded, w, h, radius);
+    let count = opened.iter().filter(|v| **v).count();
+    if count < MIN_FLIGHT_PIXELS {
+        return None;
+    }
+    let (mut sx, mut sy) = (0.0, 0.0);
+    for (i, _) in opened.iter().enumerate().filter(|(_, v)| **v) {
+        sx += (i % w) as f64;
+        sy += (i / w) as f64;
+    }
+    let n = count as f64;
+    Some((
+        (
+            sx / n + x0 as f64 - radius as f64,
+            sy / n + y0 as f64 - radius as f64,
+        ),
+        (n / std::f64::consts::PI).sqrt(),
+    ))
 }
 
 /// Finds the largest elongated object that arrived between two frames and
@@ -209,12 +255,37 @@ pub fn dart_ends(
     let axis = principal_axis(points.iter().copied())
         .ok_or(TipError::TooFewPixels { changed, largest })?;
     let ratio = axis.spread.0 / axis.spread.1.max(0.5);
+    // A visible flight settles which end is the tip: it is the far one. Grouped
+    // pixels close the small gaps in the flight's printed pattern.
+    let grouped_pixels: Vec<(usize, usize)> = labels
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| **l == label)
+        .map(|(i, _)| (i % after.width, i / after.width))
+        .collect();
+    if let Some((centre, flight_radius)) = flight_of(&grouped_pixels) {
+        let far = points
+            .iter()
+            .map(|p| (*p, (p.0 - centre.0).hypot(p.1 - centre.1)))
+            .max_by(|a, b| a.1.total_cmp(&b.1));
+        if let Some((tip, distance)) = far
+            && distance - flight_radius >= MIN_BARREL_PX
+        {
+            return Ok(DartEnds {
+                ends: [centre, tip],
+                tip: Some(1),
+            });
+        }
+    }
     // A wide flight in view makes the whole silhouette fat; the barrel and
     // shaft alone give the line, so try them first.
     if ratio >= 1.5
         && let Some(shaft) = shaft_axis(&points, &axis, 2.0, 20)
     {
-        return Ok(DartEnds { ends: shaft.ends });
+        return Ok(DartEnds {
+            ends: shaft.ends,
+            tip: None,
+        });
     }
     if ratio < 3.0 {
         return Err(TipError::NotElongated {
@@ -250,6 +321,7 @@ pub fn dart_ends(
     let tip_high = profile(true);
     Ok(DartEnds {
         ends: [tip_low, tip_high],
+        tip: None,
     })
 }
 
@@ -526,20 +598,41 @@ mod tests {
     }
 
     #[test]
-    fn a_wide_flight_does_not_hide_the_barrel() {
+    fn a_visible_flight_settles_the_tip_as_the_far_end() {
         let (empty, mut with) = bar();
-        // 28 px wide flight over the last 25 px of the bar.
+        // 28 px wide flight over the last 25 px of the 100 px bar.
         for x in 125..150 {
             for dy in -12..16 {
                 with.data[(50 + dy) as usize * 200 + x] = 20;
             }
         }
         let found = dart_ends(&empty, &with, 30, 80, 4).unwrap();
-        let mut xs = found.ends.map(|e| e.0);
-        xs.sort_by(f64::total_cmp);
-        assert!(xs[0] < 70.0, "{xs:?}");
-        // The shaft stops where the flight begins.
-        assert!(xs[1] < 130.0, "{xs:?}");
+        let tip = found.ends[found.tip.expect("flight in view")];
+        assert!(tip.0 < 62.0 && (tip.1 - 51.0).abs() < 2.0, "{tip:?}");
+    }
+
+    #[test]
+    fn a_face_on_flight_with_a_short_barrel_still_gives_the_tip() {
+        let empty = GrayImage {
+            width: 200,
+            height: 200,
+            data: vec![120; 200 * 200],
+        };
+        let mut with = empty.clone();
+        // 50 x 50 flight at the top, a 4 px barrel running 50 px below it.
+        for y in 20..70 {
+            for x in 75..125 {
+                with.data[y * 200 + x] = 20;
+            }
+        }
+        for y in 70..120 {
+            for x in 98..102 {
+                with.data[y * 200 + x] = 20;
+            }
+        }
+        let found = dart_ends(&empty, &with, 30, 80, 4).unwrap();
+        let tip = found.ends[found.tip.expect("flight in view")];
+        assert!(tip.1 > 112.0 && (tip.0 - 99.5).abs() < 4.0, "{tip:?}");
     }
 
     #[test]
