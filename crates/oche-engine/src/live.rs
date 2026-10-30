@@ -17,8 +17,9 @@ use oche_calibration::{Homography, Pixel, refine};
 use oche_capture::{Camera, CameraSpec};
 use oche_domain::board::{BoardDimensions, BoardPoint};
 use oche_domain::*;
+use oche_vision::Abstention;
 use oche_vision::image::RgbImage;
-use oche_vision::live::{Detector, Event, LineMapper, Settings};
+use oche_vision::live::{CameraChange, Detector, Event, LineMapper, Settings};
 use oche_vision::mask::dart_ends;
 
 use crate::{Engine, Observation, error};
@@ -57,14 +58,23 @@ pub struct Pipeline {
     calibrating: Mutex<()>,
     /// Empty-board frames taken when orientation began, one per camera.
     orienting: Mutex<Option<Vec<(u8, RgbImage)>>>,
+    /// Print what the detector sees to stderr.
+    verbose: bool,
     stop: AtomicBool,
     supervisor: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl Pipeline {
     pub fn spawn(engine: Arc<Mutex<Engine>>) -> Arc<Self> {
+        Self::spawn_verbose(engine, false)
+    }
+
+    /// As [`Pipeline::spawn`]; with `verbose`, each detector event and motion
+    /// change is described on stderr.
+    pub fn spawn_verbose(engine: Arc<Mutex<Engine>>, verbose: bool) -> Arc<Self> {
         let pipeline = Arc::new(Self {
             engine,
+            verbose,
             running: Mutex::new(None),
             calibrating: Mutex::new(()),
             orienting: Mutex::new(None),
@@ -114,7 +124,13 @@ impl Pipeline {
                     (Some(plan), Some(current)) if current.plan == *plan => {}
                     (Some(plan), _) => {
                         *running = None;
-                        *running = Some(start(plan.clone(), board, mappers, self.engine.clone()));
+                        *running = Some(start(
+                            plan.clone(),
+                            board,
+                            mappers,
+                            self.engine.clone(),
+                            self.verbose,
+                        ));
                     }
                     (None, Some(_)) => *running = None,
                     (None, None) => {}
@@ -439,6 +455,94 @@ fn hint_for(camera: &CameraConfig, previous: Option<&CalibrationRecord>) -> Opti
     Homography::from_matrix(matrix)?.to_image(BoardPoint::new(0.0, 140.0))
 }
 
+/// One line per detector event, with what each camera saw.
+fn describe(event: &Event, board: &BoardDimensions) -> String {
+    let views = |changes: &[CameraChange]| {
+        changes
+            .iter()
+            .map(|c| {
+                let region = match (&c.shaft, &c.region) {
+                    (Some(shaft), _) => format!("shaft fit {:.2} px rms", shaft.rms_px),
+                    (None, Some(_)) => "principal axis only".to_string(),
+                    (None, None) => "no region".to_string(),
+                };
+                format!(
+                    "camera {}: {} px changed, score {:.1}, {region}, {}",
+                    c.slot,
+                    c.changed_pixels,
+                    c.arrival_score,
+                    if c.line.is_some() { "line" } else { "no line" }
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ")
+    };
+    match event {
+        Event::Baseline { .. } => "baseline: first still scene taken as the empty board".into(),
+        Event::Disturbance { .. } => "disturbance: large change that is not darts".into(),
+        Event::Removal {
+            changes,
+            empty,
+            remaining,
+            added,
+            ..
+        } => format!(
+            "removal, board empty: {empty}; pixels still differing {remaining:?} of {added:?} added; {}",
+            views(changes)
+        ),
+        Event::Arrival {
+            changes, impact, ..
+        } => {
+            let result = match impact {
+                Ok(i) => {
+                    let hit = board.hit(i.point);
+                    format!(
+                        "impact {} at ({:.1}, {:.1}) mm from cameras {:?}, rejected {:?}, cross-checked: {}",
+                        hit.label(),
+                        i.point.x,
+                        i.point.y,
+                        i.cameras,
+                        i.rejected_cameras,
+                        i.consistency_checked
+                    )
+                }
+                Err(abstention) => format!("no impact: {abstention:?}"),
+            };
+            format!("arrival; {result}; {}", views(changes))
+        }
+    }
+}
+
+/// Why a dart could not be placed, and what each camera saw of it.
+fn explain(abstention: &Abstention, changes: &[CameraChange]) -> String {
+    let why = match abstention {
+        Abstention::TooFewViews { cameras } => format!(
+            "only {} usable dart line(s), from camera(s) {:?}; two are needed",
+            cameras.len(),
+            cameras
+        ),
+        Abstention::IllConditioned { angle_deg } => {
+            format!("the dart lines are nearly parallel ({angle_deg:.1}°)")
+        }
+        Abstention::Inconsistent {
+            cameras,
+            worst_residual_sigma,
+        } => format!("cameras {cameras:?} disagree ({worst_residual_sigma:.1} sigma)"),
+    };
+    let views: Vec<String> = changes
+        .iter()
+        .map(|c| {
+            format!(
+                "camera {}: {} px changed, {}",
+                c.slot,
+                c.changed_pixels,
+                if c.line.is_some() { "line" } else { "no line" }
+            )
+        })
+        .collect();
+    format!("{why}; {}", views.join("; "))
+}
+
 type Mappers = Vec<(u8, Option<Box<dyn LineMapper>>)>;
 
 /// What should run now, the board to score on, mappers, and configured slots.
@@ -491,6 +595,7 @@ fn start(
     board: BoardDimensions,
     mappers: Mappers,
     engine: Arc<Mutex<Engine>>,
+    verbose: bool,
 ) -> Running {
     let (samples, receiver) = mpsc::sync_channel(SAMPLE_QUEUE);
     let cameras = plan
@@ -509,6 +614,12 @@ fn start(
                 let motion = detector.in_motion();
                 if motion != reported {
                     reported = motion;
+                    if verbose {
+                        eprintln!(
+                            "detector: scene {}",
+                            if motion { "moving" } else { "still" }
+                        );
+                    }
                     match engine.lock() {
                         Ok(mut engine) => engine.set_motion(motion),
                         Err(_) => return,
@@ -517,14 +628,22 @@ fn start(
                 let Some(event) = event else {
                     continue;
                 };
+                if verbose {
+                    eprintln!("detector: {}", describe(&event, &board));
+                }
                 let observation = match event {
                     Event::Baseline { .. } => Observation::Baseline,
                     Event::Disturbance { .. } => Observation::Disturbance,
                     Event::Removal { empty, .. } => Observation::Removal { empty },
-                    Event::Arrival { impact, .. } => Observation::Arrival(impact.ok().map(|i| {
-                        let hit = board.hit(i.point);
-                        (hit.label(), hit.score())
-                    })),
+                    Event::Arrival {
+                        impact, changes, ..
+                    } => match impact {
+                        Ok(i) => {
+                            let hit = board.hit(i.point);
+                            Observation::Arrival(Some((hit.label(), hit.score())))
+                        }
+                        Err(abstention) => Observation::Uncertain(explain(&abstention, &changes)),
+                    },
                 };
                 match engine.lock() {
                     Ok(mut engine) => engine.observe(observation),

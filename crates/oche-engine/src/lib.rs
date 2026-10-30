@@ -39,6 +39,8 @@ pub enum Observation {
     Baseline,
     /// A dart arrived; `None` when its position could not be determined.
     Arrival(Option<(String, u16)>),
+    /// A dart arrived but the cameras could not place it; the text says why.
+    Uncertain(String),
     /// Darts were removed; `empty` when the board is clear again.
     Removal { empty: bool },
     /// A large change that is not darts (lighting, a moved camera).
@@ -338,30 +340,8 @@ impl Engine {
                 self.physical_darts = Some(0);
                 "board_ready"
             }
-            Observation::Arrival(scored) => {
-                self.last_activity = Instant::now();
-                self.physical_darts = self.physical_darts.map(|n| n.saturating_add(1));
-                self.scene = SceneState::DartsPresent;
-                // A fourth dart must not overwrite an accepted three-dart visit.
-                if self.throws.len() >= 3 {
-                    "arrival_ignored"
-                } else {
-                    let uncertain = scored.is_none();
-                    let (label, score) = scored.unwrap_or_else(|| ("?".into(), 0));
-                    self.throws.push(Throw {
-                        label,
-                        score,
-                        synthetic: false,
-                        corrected: false,
-                        uncertain,
-                    });
-                    if uncertain {
-                        "throw_uncertain"
-                    } else {
-                        "throw_accepted"
-                    }
-                }
-            }
+            Observation::Arrival(scored) => self.arrival(scored, None),
+            Observation::Uncertain(reason) => self.arrival(None, Some(reason)),
             Observation::Removal { empty: true } => {
                 self.last_activity = Instant::now();
                 self.throws.clear();
@@ -378,6 +358,31 @@ impl Engine {
             Observation::Disturbance => "scene_disturbed",
         };
         self.publish(kind);
+    }
+
+    fn arrival(&mut self, scored: Option<(String, u16)>, reason: Option<String>) -> &'static str {
+        self.last_activity = Instant::now();
+        self.physical_darts = self.physical_darts.map(|n| n.saturating_add(1));
+        self.scene = SceneState::DartsPresent;
+        // A fourth dart must not overwrite an accepted three-dart visit.
+        if self.throws.len() >= 3 {
+            return "arrival_ignored";
+        }
+        let uncertain = scored.is_none();
+        let (label, score) = scored.unwrap_or_else(|| ("?".into(), 0));
+        self.throws.push(Throw {
+            label,
+            score,
+            synthetic: false,
+            corrected: false,
+            uncertain,
+            uncertainty: reason,
+        });
+        if uncertain {
+            "throw_uncertain"
+        } else {
+            "throw_accepted"
+        }
     }
 
     /// Whether the cameras currently see movement. Not published as an event:
@@ -583,6 +588,14 @@ mod tests {
         assert_eq!(snapshot.physical_darts, Some(0));
         e.observe(Observation::Arrival(None));
         assert!(e.snapshot().throws[0].uncertain);
+        e.observe(Observation::Removal { empty: true });
+        e.observe(Observation::Uncertain("only 1 usable dart line".into()));
+        let throw = &e.snapshot().throws[0];
+        assert!(throw.uncertain);
+        assert_eq!(
+            throw.uncertainty.as_deref(),
+            Some("only 1 usable dart line")
+        );
         assert!(!e.snapshot().throws[0].synthetic);
         let kinds: Vec<_> = e.history().iter().map(|v| v.kind.clone()).collect();
         assert_eq!(
@@ -595,6 +608,8 @@ mod tests {
                 "throw_accepted",
                 "arrival_ignored",
                 "partial_takeout",
+                "takeout_completed",
+                "throw_uncertain",
                 "takeout_completed",
                 "throw_uncertain"
             ]

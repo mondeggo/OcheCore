@@ -44,6 +44,14 @@ struct Args {
     command: Option<Action>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum LogLevel {
+    /// Native events: starts, throws, takeouts, camera changes.
+    Info,
+    /// Events plus detector internals.
+    Debug,
+}
+
 #[derive(Subcommand)]
 enum Action {
     /// Create configuration interactively; Enter accepts each default.
@@ -59,6 +67,11 @@ enum Action {
         /// Run controls only and never open cameras.
         #[arg(long)]
         no_capture: bool,
+        /// Print events to the terminal as they happen: `info` shows the same
+        /// events as `oche-core events`; `debug` adds what the detector sees
+        /// (changed pixels, dart lines, impacts, abstentions). Silent by default.
+        #[arg(long, value_enum, value_name = "LEVEL")]
+        log: Option<LogLevel>,
     },
     /// Open the interactive terminal UI for a local or remote daemon.
     Remote,
@@ -233,6 +246,7 @@ async fn execute(args: Args) -> Result<()> {
         demo,
         no_capture,
         init_bind,
+        log,
     }) = args.command
     {
         if args.host != "127.0.0.1" {
@@ -275,8 +289,33 @@ async fn execute(args: Args) -> Result<()> {
             mode,
             address.to_string(),
         )));
-        let pipeline =
-            (mode == Mode::Live).then(|| oche_engine::live::Pipeline::spawn(engine.clone()));
+        if log.is_some() {
+            let (_, mut events) = engine
+                .lock()
+                .map_err(|_| anyhow::anyhow!("engine unavailable"))?
+                .subscribe();
+            tokio::spawn(async move {
+                use tokio::sync::broadcast::error::RecvError;
+                loop {
+                    match events.recv().await {
+                        Ok(event) => eprintln!("{}", event_line(&event)),
+                        Err(RecvError::Lagged(n)) => eprintln!("log: skipped {n} events"),
+                        Err(RecvError::Closed) => break,
+                    }
+                }
+            });
+            eprintln!(
+                "Logging {} to this terminal.",
+                if log == Some(LogLevel::Debug) {
+                    "events and detector details"
+                } else {
+                    "events"
+                }
+            );
+        }
+        let pipeline = (mode == Mode::Live).then(|| {
+            oche_engine::live::Pipeline::spawn_verbose(engine.clone(), log == Some(LogLevel::Debug))
+        });
         let service = oche_api::Service::shared(engine, pipeline.clone());
         let result = oche_api::serve(listener, service, shutdown()).await;
         if let Some(pipeline) = pipeline {
@@ -511,6 +550,36 @@ async fn execute(args: Args) -> Result<()> {
     Ok(())
 }
 
+/// One line for the daemon's own log: seconds since start, kind, state, visit.
+fn event_line(event: &NativeEvent) -> String {
+    let s = &event.snapshot;
+    let visit = if s.throws.is_empty() {
+        "—".to_string()
+    } else {
+        s.throws
+            .iter()
+            .map(|t| t.label.as_str())
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let mut line = format!(
+        "[{:>8.1}s] #{:<4} {:<18} {:?}, scene {:?}, visit {visit}, darts on board {}",
+        s.uptime_ms as f64 / 1000.0,
+        event.sequence,
+        event.kind,
+        s.state,
+        s.scene,
+        s.physical_darts
+            .map_or("unknown".to_string(), |n| n.to_string())
+    );
+    if event.kind == "throw_uncertain"
+        && let Some(note) = s.throws.iter().rev().find_map(|t| t.uncertainty.as_deref())
+    {
+        line.push_str(&format!("\n             ? {note}"));
+    }
+    line
+}
+
 fn print_json(value: &impl serde::Serialize) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(value)?);
     Ok(())
@@ -559,6 +628,11 @@ fn show(snapshot: &Snapshot, json: bool) -> Result<()> {
             .map(|n| n.to_string())
             .unwrap_or_else(|| "unknown".into())
     );
+    for (index, throw) in snapshot.throws.iter().enumerate() {
+        if let Some(note) = &throw.uncertainty {
+            println!("Dart {} is uncertain: {note}", index + 1);
+        }
+    }
     let activity = snapshot.activity();
     println!("Board: {} — {}", activity.label, activity.detail);
     println!(

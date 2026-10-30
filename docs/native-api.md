@@ -86,7 +86,8 @@ Modes: `live` (default `run`: cameras open while running), `control_only`
 (`run --no-capture`), and `demo`. Outside live mode occupancy is `null` and scene
 is `unknown`. Detection needs at least two calibrated cameras; a throw whose
 position cannot be determined is added as `?` with `uncertain: true` for
-correction.
+correction, and an `uncertainty` text saying why (for example, how many usable
+dart lines were found and what each camera saw).
 
 ## Events and reconnect
 

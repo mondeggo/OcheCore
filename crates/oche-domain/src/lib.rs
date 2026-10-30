@@ -334,6 +334,9 @@ pub struct Throw {
     /// it scores 0 until corrected.
     #[serde(default)]
     pub uncertain: bool,
+    /// Why the position could not be determined, with what each camera saw.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uncertainty: Option<String>,
 }
 
 impl Throw {
@@ -366,6 +369,7 @@ impl Throw {
             synthetic: true,
             corrected: false,
             uncertain: false,
+            uncertainty: None,
         })
     }
 }
