@@ -26,9 +26,8 @@
 
 <p align="center">
   <a href="#install">Install</a> ·
-  <a href="#run-from-source">Build from source</a> ·
-  <a href="#terminal-ui">Terminal UI</a> ·
-  <a href="#docker">Docker</a> ·
+  <a href="#first-run">First run</a> ·
+  <a href="#documentation">Documentation</a> ·
   <a href="docs/native-api.md">Native API</a> ·
   <a href="oche-core-roadmap.md">Roadmap</a>
 </p>
@@ -59,24 +58,14 @@ On the board computer (Linux, amd64 or arm64):
 curl -fsSL https://raw.githubusercontent.com/mondeggo/ochecore/main/scripts/install.sh | bash
 ```
 
-This downloads the latest release, checks its checksum, installs `oche-core` to
-`~/.local/bin`, offers to put your user in the `video` group (needed for cameras),
-runs the first-time setup questions, and can start the service at boot.
-
 To run it in Docker instead, add `--docker`:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/mondeggo/ochecore/main/scripts/install.sh | bash -s -- --docker
 ```
 
-That installs Docker if it is missing, pulls the release image
-(`ghcr.io/mondeggo/ochecore`), and starts it with Compose in `~/ochecore`, with the
-cameras found at install time passed through. Use `./oche-core remote` in that
-folder to reach the terminal UI. Options: `--version v0.1.0`, `--dir DIR`,
-`--port N`, `--lan` (publish on the network; the API has no login), `--no-system`
-(do not change groups or services), `-y` (accept defaults), `--help`. Run the
-script again to update. It needs a published release; see
-[Releases](https://github.com/mondeggo/ochecore/releases).
+Options, building from source, and Docker Compose are in
+[Installation](docs/installation.md).
 
 ### First run
 
@@ -91,287 +80,19 @@ script again to update. It needs a published release; see
    `NEEDS SETUP`, `NEEDS CALIBRATION`, `MOTION`, `READY`, `TAKING OUT`,
    `TAKE OUT DARTS`, or `ERROR` with the cause.
 
-## Build from source
+## Documentation
 
-Install Rust with [rustup](https://rustup.rs/). This repository pins Rust 1.90.0,
-rustfmt, and Clippy. Development builds need a Linux C linker (for example,
-`build-essential` on Debian/Ubuntu). No OpenCV or camera SDK is needed.
-
-```sh
-cargo build --locked --release -p oche-cli
-./target/release/oche-core run
-```
-
-In another terminal, run `./target/release/oche-core remote`. Running without a
-subcommand also opens the TUI. Closing the UI leaves the daemon running. If the
-daemon is missing, the UI explains how to start it and reconnects automatically.
-
-`init` asks for a board name, listen IP address, port, and camera count. Press Enter
-to accept each default: `My dartboard`, `127.0.0.1`, `5180`, and one camera slot.
-It creates `$XDG_CONFIG_HOME/ochecore/board.toml`, or
-`~/.config/ochecore/board.toml`. On first use, `oche-core run` explains that no
-configuration exists, opens the setup prompts, and starts the daemon immediately
-after saving. No separate `init` command or second `run` is needed. Without an
-interactive terminal, it logs that defaults are being saved and continues.
-Existing configurations are reused unchanged. `init` remains available when you
-want to configure a board without starting it. Use `--config FILE` for a separate
-board. Remote management does not require a local configuration. Board ID
-survives rename/restart; session ID changes on restart. A file lock prevents two
-daemons from owning one configuration.
-
-## Commands
-
-```sh
-oche-core status --json
-oche-core start
-oche-core stop
-oche-core reset
-oche-core wake
-oche-core events --json
-oche-core events --json --count 5
-oche-core doctor
-oche-core init                        # interactive setup; never overwrites config
-oche-core config init                 # alias for init
-oche-core init --defaults             # unattended setup with default values
-oche-core init --defaults --name "Basement" --bind 127.0.0.1 --port 5180
-oche-core config reset                # confirm replacement, then run setup again
-oche-core config validate             # local TOML validation
-oche-core config export               # connected daemon's configuration
-oche-core config set board.name "Basement board"
-oche-core config set detection.speed low
-oche-core config set detection.standby_seconds 1800
-oche-core config set cameras.count 3
-oche-core config set cameras.1.device /dev/v4l/by-path/REPLACE_WITH_DEVICE
-oche-core config set cameras.1.width 1280
-oche-core config set cameras.1.height 720
-oche-core config set cameras.1.fps 30
-oche-core config set cameras.1.rotation 90
-oche-core correct 1 D20              # correct an existing first dart
-oche-core cameras available --json    # devices/modes on the daemon host
-oche-core cameras list --json
-oche-core cameras inspect --camera 1
-oche-core cameras snapshot --camera 1 --out cam1.jpg   # save a frame
-oche-core orient                      # record where the 20 is (one dart)
-oche-core calibrate --all             # empty board; asks for the dart the first time
-```
-
-`config set` validates and atomically saves through the daemon; board ID is read
-only. `init`, `config reset`, and `config validate` are local file operations. Camera count is 1–4;
-decreasing it removes the highest slots. Assigned device paths must be unique.
-
-To start fresh, stop the daemon with Ctrl+C (or stop its container), run
-`oche-core config reset`, then `oche-core run`. Reset replaces all configuration
-settings and generates a **new board ID**. It refuses while the configuration is
-in use. Cancelling setup leaves the previous file untouched; the validated result
-is saved atomically at the end. For an unattended reset, use
-`oche-core config reset --yes --defaults`. To change just the port while keeping
-your board identity, use `oche-core config set server.port 5180` with the daemon
-running, then restart it. The separate `oche-core reset` command only resets the
-logical dart visit.
-
-The setup listen address belongs to this board: loopback permits local clients,
-and `0.0.0.0` listens on all IPv4 interfaces. `--host` selects a daemon to manage;
-it is not a persisted listen setting.
-Linux camera discovery queries devices and advertised modes without starting capture.
-Only discrete integer FPS values are selectable today; fractional rates and ranged
-modes are reported as limitations. Advertised modes do not prove capture works.
-
-Speed presets: `very_low`, `low`, `default`, `high`, `very_high` (3, 5, 10, 15 and
-30 analyses per second per camera). Standby values: `0` (disabled), `300`, `600`,
-`900`, `1800`, or `3600` seconds; standby closes the cameras and polling does not
-keep the service awake. `calibrate --camera N` refits one camera against the board
-already measured; `calibrate --all` measures the board's wire radii and fits every
-assigned camera. Both need a running board, an empty and lit board, and the 20
-recorded by `orient`.
-
-JSON goes to stdout; errors/diagnostics go to stderr. Exit codes: `0` success,
-`1` operational error, `2` command-line usage error. Ctrl-C/SIGTERM stops the daemon.
-
-## Terminal UI
-
-Two screens: **Board** and **Events**. Board begins with board/detection settings,
-then three editable dart slots and compact camera rows. The permanent status,
-help, and control panels have been removed. Errors and save feedback appear only
-when needed.
-
-Click an accepted dart to correct its label (`S1`–`S20`, `D1`–`D20`, `T1`–`T20`,
-`SB`, `DB`, or `MISS`). Empty slots cannot invent throws. Corrections preserve
-physical occupancy and synthetic provenance, and reject stale visits/restarts.
-A `*` marks corrected darts. Live detection is deferred; test corrections in demo.
-
-The first section holds **Start / Stop / Reset / Wake** and the board **State**.
-Settings follow in this order: name, IP address, port, detection speed, standby,
-and number of cameras. Each camera row shows the camera's name and USB port with a
-**Calibrate** button; **Calibrate all**, **Resolution** and **FPS** (applied to
-every assigned camera, showing the current values) sit below the cameras. Choices
-appear in clickable lists; arrows/wheel select and Save applies. Devices assigned
-to other slots are excluded, including aliases. **+ Add** / **- Remove last**
-review the new count before saving (one to four). Rotation, exposure and the 20
-reference are not on the screen; use `oche-core config set` and `oche-core orient`.
-
-Missing devices, permissions, or mode data are reported when opening a picker.
-Discovery runs on the daemon machine, refreshes every five seconds, and does not
-block the control worker. There are no guessed fallback camera capabilities.
-
-Events retains up to 64 native events with sequence/time, session/board IDs,
-state, revision, scene, occupancy, and visit. Use `oche-core events --json` for
-full payloads or an ongoing diagnostic recording.
-
-| Key | Action |
+| Topic | Page |
 | --- | --- |
-| Tab / Shift-Tab, or 1 / 2 | Switch Board / Events |
-| s / x / r / w | Start / stop / reset visit / wake |
-| c / o | Calibrate all (asks for the dart first time) / record the 20 again |
-| Up / Down | Select setting, dart, or camera; scroll in Events |
-| PageUp / PageDown, Home / End | Scroll |
-| + / - | Add camera / remove last |
-| Left / Right | Select camera field or dropdown value |
-| Enter / Escape | Edit or save / cancel |
-| Ctrl-U | Clear text while editing |
-| t / o | Synthetic T20 / full takeout, demo only |
-| q / Ctrl-C | Close UI |
-
-The daemon is launched with `oche-core run`; the TUI is opened separately with
-`oche-core remote`. Start/Stop inside the TUI controls board activity, while
-closing the TUI leaves the daemon running.
-
-Edits check the state revision to detect concurrent changes. Keyboard input stays
-responsive during network failures. Stale data is labeled disconnected and
-controls are disabled until connectivity returns.
-
-Detection options and their calibration requirements are described in
-[the detection proposal](docs/detection-algorithms.md). Which of them is active,
-and how well it works on real throws, is not yet established.
-
-## Try a visit without cameras
-
-Start `oche-core run --demo`, then use the UI or another terminal:
-
-```sh
-oche-core start
-oche-core demo throw T20
-oche-core demo throw D20
-oche-core demo throw SB
-oche-core demo takeout --remaining 1
-oche-core demo takeout
-```
-
-Labels: `S1`–`S20`, `D1`–`D20`, `T1`–`T20`, `SB`, `DB`, `MISS`. Every throw is
-marked synthetic. A fourth dart is rejected; early and partial takeout work.
-Reset clears the logical visit while preserving simulated physical occupancy.
-Only configuration/identity persist across restart; visit state is in memory.
-
-## LAN management
-
-```sh
-oche-core --bind 0.0.0.0 --port 5180 run
-oche-core --host board-host --port 5180 remote
-oche-core --host board-host --port 5180 status --json
-```
-
-The default port is **5180**, keeping OcheCore separate from Autodarts on 3180.
-Default binding is loopback. `--bind` selects the listen address; `--host` selects
-the daemon to manage. Listen overrides are per invocation. Saved `server.bind`
-and `server.port` changes require restart; until then use the old port explicitly.
-
-Existing configuration files keep their saved port. To switch an existing board,
-stop its daemon, set `port = 5180` in the `[server]` section of `board.toml`, then
-restart it. For a temporary override, use `oche-core --port 5180 run` and pass
-`--port 5180` to management commands as well. Existing Docker volumes also keep
-their saved configuration; their `server.port` must match the container's 5180
-port mapping.
-
-The native API is plain HTTP without authentication: anyone who can reach it can
-control the board. Use loopback, a trusted/private LAN, or an SSH tunnel. No hosted
-service is needed. The [native API](docs/native-api.md) is separate from future
-Autodarts adapters.
-
-## Docker
-
-```sh
-mkdir -p data
-export OCHECORE_UID=$(id -u) OCHECORE_GID=$(id -g)
-docker compose up --build -d
-docker compose exec ochecore oche-core remote
-docker compose exec ochecore oche-core status --json
-docker compose down
-```
-
-Compose mounts the host folder `./data` at `/data` and publishes port 5180 on loopback.
-On an empty data folder, the image explains that configuration is missing, runs
-setup, then starts the daemon automatically. Detached `docker compose up -d`
-creates default settings without waiting for input. With an interactive terminal,
-setup asks for the board name, listen address, port, and camera count:
-
-```sh
-docker compose run --build --service-ports --rm ochecore
-```
-
-That command continues running the daemon after the prompts; no second command
-is needed. Do not also start the normal Compose service at the same time.
-Existing configuration is reused without prompts or replacement. Invalid
-configuration still reports an error instead of resetting board identity.
-The image's default command is `run --init-bind 0.0.0.0`: the initial address
-allows container networking and is only used when creating configuration.
-Subsequent starts honor the saved address. Explicit `--bind` / `--port` remain
-runtime overrides. Keep container port 5180 unless you also update the mapping
-and healthcheck; `OCHECORE_PORT` changes only the published host port.
-Set `OCHECORE_DATA_DIR` to use another existing folder. The UID/GID variables above
-run the container as your host user so it can write to that folder; keep them set
-when running Compose, or save their numeric values in `.env`. Without overrides,
-the container runs as UID/GID 65532 and the folder must be writable by that user.
-Existing installations using the `board-data` named volume must copy their saved
-configuration into the host folder before switching to preserve board identity.
-Set `OCHECORE_PORT=5181` to coexist with a service already using that port. Set
-`OCHECORE_BIND=0.0.0.0` explicitly for trusted LAN access.
-
-Published releases provide an AMD64/ARM64 image. Replace OWNER, REPOSITORY, and
-the version with the GitHub repository and release tag:
-
-```sh
-export OCHECORE_IMAGE=ghcr.io/OWNER/REPOSITORY:vX.Y.Z
-docker compose up -d --no-build
-```
-
-The final image contains a static executable and notices, runs as UID/GID 65532,
-and needs no shell, compiler, or Internet. Cameras need the device mapping below. `/data` must be
-writable; the rest of the filesystem can be read only. `docker compose down -v`
-does not delete the host data folder. For discovery, explicitly map devices with
-`--device /dev/videoN` (Compose `devices`) and grant the container user the device
-group using `--group-add` / `group_add`. Only accessible mapped devices can be
-queried or captured; privileged mode is unnecessary. `scripts/install.sh --docker`
-writes a Compose file that does this for the cameras it finds.
-
-## Development and releases
-
-```sh
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked
-cargo build --locked -p oche-cli
-python3 scripts/smoke.py --binary target/debug/oche-core
-```
-
-The smoke test exercises CLI/TUI editing, terminal restoration, events,
-persistence, port conflicts, and shutdown with connected clients. It needs Linux,
-Python 3, and permission to bind loopback sockets.
-
-Run `./clean.sh` to remove local `target/`, `dist/` (including compiled binaries
-and release archives), and `scripts/__pycache__/`. Preview with
-`./clean.sh --dry-run`. Stop builds before cleaning. Source, configuration,
-data, recordings, and Docker resources are preserved; custom Cargo target
-directories outside the checkout are untouched.
-
-GitHub Actions checks pushes/PRs. A `vX.Y.Z` tag matching Cargo.toml builds and tests
-static Linux AMD64/ARM64 binaries, creates archives/checksums, and publishes a
-GitHub Release and matching Docker image. See [release setup](docs/releases.md),
-including optional Docker Hub publishing with Oche's credentials convention.
-
-Crates: `oche-domain`, `oche-engine`, `oche-api`, `oche-cli`. Capture/calibration/
-vision crates will be introduced when implemented. See the
-[roadmap](oche-core-roadmap.md), [deferred discovery](docs/discovery.md),
-[engineering decisions](docs/architecture.md), and [AGENTS.md](AGENTS.md).
-Use Conventional Commits, such as `feat(cli): add board controls`.
+| Install, build from source, Docker | [Installation](docs/installation.md) |
+| Commands, terminal UI, demo mode | [Using OcheCore](docs/usage.md) |
+| LAN access and security | [Networking and security](docs/networking.md) |
+| Native HTTP API and events | [Native API](docs/native-api.md) |
+| Design decisions and boundaries | [Architecture](docs/architecture.md) |
+| Detection methods (proposed) | [Detection algorithms](docs/detection-algorithms.md) |
+| Open questions and evidence | [Discovery](docs/discovery.md) |
+| Build, test, release | [Development](docs/development.md), [Releases](docs/releases.md) |
+| Plan | [Roadmap](oche-core-roadmap.md) |
 
 ## License
 
