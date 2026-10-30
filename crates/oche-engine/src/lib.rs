@@ -1,4 +1,5 @@
 //! Serialized control state, independent of camera capture and HTTP transports.
+pub mod live;
 pub mod storage;
 
 use oche_domain::*;
@@ -26,6 +27,22 @@ pub struct Engine {
     startup_server: ServerConfig,
     events: broadcast::Sender<NativeEvent>,
     history: VecDeque<NativeEvent>,
+    calibration: Option<CalibrationRecord>,
+    cameras: Vec<CameraStatus>,
+    motion: bool,
+}
+
+/// What the live detector saw, already scored on the measured board.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Observation {
+    /// The first still scene, taken as the empty board.
+    Baseline,
+    /// A dart arrived; `None` when its position could not be determined.
+    Arrival(Option<(String, u16)>),
+    /// Darts were removed; `empty` when the board is clear again.
+    Removal { empty: bool },
+    /// A large change that is not darts (lighting, a moved camera).
+    Disturbance,
 }
 
 pub fn error(code: &str, message: impl Into<String>) -> ApiError {
@@ -38,6 +55,8 @@ pub fn error(code: &str, message: impl Into<String>) -> ApiError {
 impl Engine {
     pub fn new(config: Config, store: storage::Store, mode: Mode, listening_on: String) -> Self {
         let (events, _) = broadcast::channel(HISTORY_LIMIT);
+        // An unreadable calibration is reported by `calibration_problem`, not fatal.
+        let calibration = store.load_calibration().ok().flatten();
         Self {
             startup_server: config.server.clone(),
             config,
@@ -59,7 +78,37 @@ impl Engine {
             listening_on,
             events,
             history: VecDeque::new(),
+            calibration,
+            cameras: Vec::new(),
+            motion: false,
         }
+    }
+
+    pub fn mode(&self) -> Mode {
+        self.mode
+    }
+
+    pub fn state(&self) -> ServiceState {
+        self.state
+    }
+
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+
+    pub fn calibration(&self) -> Option<&CalibrationRecord> {
+        self.calibration.as_ref()
+    }
+
+    /// Configured cameras that have a calibration matching their settings.
+    fn calibrated_cameras(&self) -> usize {
+        self.calibration.as_ref().map_or(0, |record| {
+            self.config
+                .cameras
+                .iter()
+                .filter(|c| record.for_camera(c).is_some())
+                .count()
+        })
     }
 
     pub fn snapshot(&self) -> Snapshot {
@@ -76,14 +125,18 @@ impl Engine {
             throws: self.throws.clone(),
             physical_darts: self.physical_darts,
             capabilities: Capabilities {
-                capture: false,
-                calibration: false,
-                vision: false,
+                capture: self.mode == Mode::Live,
+                calibration: self.calibrated_cameras() > 0,
+                // Fusing shaft lines needs at least two calibrated views.
+                vision: self.mode == Mode::Live && self.calibrated_cameras() >= 2,
                 autodarts_compatibility: false,
                 synthetic_input: self.mode == Mode::Demo,
             },
             listening_on: self.listening_on.clone(),
             restart_required: self.config.server != self.startup_server,
+            cameras: self.cameras.clone(),
+            calibration: self.calibration.clone(),
+            motion: self.motion,
         }
     }
 
@@ -143,10 +196,16 @@ impl Engine {
                 self.throws.clear();
                 "visit_reset"
             }
-            Command::Calibrate { .. } => {
+            Command::Calibrate { .. } | Command::OrientBegin | Command::OrientFinish => {
+                // The live service runs calibration outside the command lock;
+                // reaching the engine means no camera pipeline is available.
                 return Err(error(
-                    "not_implemented",
-                    "Calibration requires the future camera and calibration backends. No calibration was changed.",
+                    "conflict",
+                    if self.mode == Mode::Live {
+                        "calibration is unavailable in this service; no calibration was changed"
+                    } else {
+                        "calibration needs cameras; restart the daemon with `run` (not --demo). No calibration was changed"
+                    },
                 ));
             }
             Command::CorrectThrow {
@@ -265,6 +324,89 @@ impl Engine {
         })?;
         self.config = candidate;
         self.publish("config_changed");
+        Ok(self.snapshot())
+    }
+
+    /// Applies a detector observation to the visit. Ignored unless running live.
+    pub fn observe(&mut self, observation: Observation) {
+        if self.mode != Mode::Live || self.state != ServiceState::Running {
+            return;
+        }
+        let kind = match observation {
+            Observation::Baseline => {
+                self.scene = SceneState::Empty;
+                self.physical_darts = Some(0);
+                "board_ready"
+            }
+            Observation::Arrival(scored) => {
+                self.last_activity = Instant::now();
+                self.physical_darts = self.physical_darts.map(|n| n.saturating_add(1));
+                self.scene = SceneState::DartsPresent;
+                // A fourth dart must not overwrite an accepted three-dart visit.
+                if self.throws.len() >= 3 {
+                    "arrival_ignored"
+                } else {
+                    let uncertain = scored.is_none();
+                    let (label, score) = scored.unwrap_or_else(|| ("?".into(), 0));
+                    self.throws.push(Throw {
+                        label,
+                        score,
+                        synthetic: false,
+                        corrected: false,
+                        uncertain,
+                    });
+                    if uncertain {
+                        "throw_uncertain"
+                    } else {
+                        "throw_accepted"
+                    }
+                }
+            }
+            Observation::Removal { empty: true } => {
+                self.last_activity = Instant::now();
+                self.throws.clear();
+                self.physical_darts = Some(0);
+                self.scene = SceneState::Empty;
+                "takeout_completed"
+            }
+            Observation::Removal { empty: false } => {
+                self.last_activity = Instant::now();
+                self.physical_darts = None;
+                self.scene = SceneState::PartialTakeout;
+                "partial_takeout"
+            }
+            Observation::Disturbance => "scene_disturbed",
+        };
+        self.publish(kind);
+    }
+
+    /// Whether the cameras currently see movement. Not published as an event:
+    /// it changes constantly and consumers read it from the snapshot.
+    pub fn set_motion(&mut self, motion: bool) {
+        self.motion = motion;
+    }
+
+    /// Updates live camera status; publishes only when a state or error changes.
+    pub fn set_camera_status(&mut self, cameras: Vec<CameraStatus>) {
+        let changed = cameras.len() != self.cameras.len()
+            || cameras
+                .iter()
+                .zip(&self.cameras)
+                .any(|(a, b)| a.slot != b.slot || a.state != b.state || a.error != b.error);
+        self.cameras = cameras;
+        if changed {
+            self.publish("cameras_changed");
+        }
+    }
+
+    /// Saves a validated calibration atomically and makes it current.
+    pub fn install_calibration(&mut self, record: CalibrationRecord) -> Result<Snapshot, ApiError> {
+        self.store
+            .save_calibration(&record)
+            .map_err(|e| error("storage_error", format!("calibration was not saved: {e:#}")))?;
+        self.calibration = Some(record);
+        self.last_activity = Instant::now();
+        self.publish("calibration_updated");
         Ok(self.snapshot())
     }
 
@@ -404,6 +546,75 @@ mod tests {
             .is_err()
         );
         assert!(!e.snapshot().capabilities.vision);
+    }
+
+    #[test]
+    fn live_observations_follow_visit_rules() {
+        let (_dir, mut e) = engine(Mode::Live);
+        e.observe(Observation::Baseline);
+        assert!(e.history().is_empty(), "ignored while stopped");
+        e.command(Command::Start).unwrap();
+        e.observe(Observation::Baseline);
+        for label in ["T20", "S1", "D5"] {
+            e.observe(Observation::Arrival(Some((label.into(), 1))));
+        }
+        e.observe(Observation::Arrival(None));
+        let snapshot = e.snapshot();
+        assert_eq!(
+            snapshot
+                .throws
+                .iter()
+                .map(|t| t.label.as_str())
+                .collect::<Vec<_>>(),
+            ["T20", "S1", "D5"],
+            "a fourth arrival does not overwrite the visit"
+        );
+        assert_eq!(snapshot.physical_darts, Some(4));
+        e.observe(Observation::Removal { empty: false });
+        assert_eq!(e.snapshot().scene, SceneState::PartialTakeout);
+        assert_eq!(
+            e.snapshot().throws.len(),
+            3,
+            "partial takeout keeps the visit"
+        );
+        e.observe(Observation::Removal { empty: true });
+        let snapshot = e.snapshot();
+        assert!(snapshot.throws.is_empty());
+        assert_eq!(snapshot.physical_darts, Some(0));
+        e.observe(Observation::Arrival(None));
+        assert!(e.snapshot().throws[0].uncertain);
+        assert!(!e.snapshot().throws[0].synthetic);
+        let kinds: Vec<_> = e.history().iter().map(|v| v.kind.clone()).collect();
+        assert_eq!(
+            kinds,
+            [
+                "started",
+                "board_ready",
+                "throw_accepted",
+                "throw_accepted",
+                "throw_accepted",
+                "arrival_ignored",
+                "partial_takeout",
+                "takeout_completed",
+                "throw_uncertain"
+            ]
+        );
+    }
+
+    #[test]
+    fn camera_status_publishes_only_state_changes() {
+        let (_dir, mut e) = engine(Mode::Live);
+        let status = |state, fps| CameraStatus {
+            slot: 1,
+            state,
+            fps,
+            error: None,
+        };
+        e.set_camera_status(vec![status(CameraState::Streaming, 29.9)]);
+        e.set_camera_status(vec![status(CameraState::Streaming, 30.0)]);
+        e.set_camera_status(vec![status(CameraState::Error, 0.0)]);
+        assert_eq!(e.history().len(), 2);
+        assert_eq!(e.snapshot().cameras[0].state, CameraState::Error);
     }
 
     #[test]

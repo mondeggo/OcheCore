@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, bail};
 use fs2::FileExt;
-use oche_domain::Config;
+use oche_domain::{CalibrationRecord, Config};
 use std::{
     fs::{self, File, OpenOptions},
     io::Write,
@@ -52,6 +52,51 @@ impl Store {
         self.load_or_create()
     }
 
+    /// `board.toml` keeps its calibration in `board.calibration.json`.
+    pub fn calibration_path(&self) -> PathBuf {
+        sibling(&self.path, "calibration.json")
+    }
+
+    pub fn load_calibration(&self) -> Result<Option<CalibrationRecord>> {
+        let path = self.calibration_path();
+        if !path.try_exists()? {
+            return Ok(None);
+        }
+        let text = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+        let record: CalibrationRecord =
+            serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
+        record.validate().map_err(anyhow::Error::msg)?;
+        Ok(Some(record))
+    }
+
+    /// Validates, keeps the current file as `*.calibration.previous.json`, and
+    /// atomically replaces it.
+    pub fn save_calibration(&self, record: &CalibrationRecord) -> Result<()> {
+        record.validate().map_err(anyhow::Error::msg)?;
+        let path = self.calibration_path();
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        if path.try_exists()? {
+            let mut previous = tempfile::NamedTempFile::new_in(parent)?;
+            previous.write_all(&fs::read(&path)?)?;
+            previous.as_file().sync_all()?;
+            previous
+                .persist(sibling(&self.path, "calibration.previous.json"))
+                .context("keep previous calibration")?;
+        }
+        let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+        temp.write_all(serde_json::to_string_pretty(record)?.as_bytes())?;
+        temp.as_file().sync_all()?;
+        temp.persist(&path)
+            .context("atomically replace calibration")?;
+        File::open(parent)?
+            .sync_all()
+            .context("sync calibration directory")?;
+        Ok(())
+    }
+
     pub fn save(&self, config: &Config) -> Result<()> {
         config.validate().map_err(anyhow::Error::msg)?;
         let parent = self
@@ -69,6 +114,14 @@ impl Store {
             .context("sync configuration directory")?;
         Ok(())
     }
+}
+
+fn sibling(config: &Path, suffix: &str) -> PathBuf {
+    let stem = config
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "board".into());
+    config.with_file_name(format!("{stem}.{suffix}"))
 }
 
 pub fn read(path: &Path) -> Result<Config> {
@@ -119,5 +172,47 @@ mod tests {
         config.server.port = 0;
         assert!(store.save(&config).is_err());
         assert_eq!(fs::read(&path).unwrap(), original);
+    }
+
+    fn record(created: u64) -> CalibrationRecord {
+        CalibrationRecord {
+            schema_version: oche_domain::CALIBRATION_VERSION,
+            created_unix_ms: created,
+            board: oche_domain::board::BoardDimensions::wdf(),
+            cameras: vec![oche_domain::CameraCalibration {
+                slot: 1,
+                device: "/dev/v4l/by-path/a".into(),
+                width: 1280,
+                height: 720,
+                rotation: 0,
+                to_board: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                wire_rms_mm: 0.25,
+                wire_points: 2000,
+            }],
+        }
+    }
+
+    #[test]
+    fn calibration_round_trips_keeps_the_previous_and_rejects_invalid_records() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::acquire(&dir.path().join("board.toml")).unwrap();
+        assert!(store.load_calibration().unwrap().is_none());
+        store.save_calibration(&record(1)).unwrap();
+        store.save_calibration(&record(2)).unwrap();
+        assert_eq!(
+            store.load_calibration().unwrap().unwrap().created_unix_ms,
+            2
+        );
+        let previous =
+            fs::read_to_string(dir.path().join("board.calibration.previous.json")).unwrap();
+        assert!(previous.contains("\"created_unix_ms\": 1"));
+
+        let mut invalid = record(3);
+        invalid.cameras[0].to_board[0][0] = f64::NAN;
+        assert!(store.save_calibration(&invalid).is_err());
+        assert_eq!(
+            store.load_calibration().unwrap().unwrap().created_unix_ms,
+            2
+        );
     }
 }

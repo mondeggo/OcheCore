@@ -8,8 +8,12 @@ license.workspace = true
 
 [dependencies]
 oche-domain.workspace = true
+oche-calibration.workspace = true
+oche-capture.workspace = true
+oche-vision.workspace = true
 anyhow.workspace = true
 fs2.workspace = true
+serde_json.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
 toml.workspace = true
