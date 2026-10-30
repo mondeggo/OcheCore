@@ -81,3 +81,11 @@ The smoke test uses no external network, a read-only root filesystem, no Linux
 capabilities, and a temporary volume. It checks persistence across restart and
 removes its resources. Release images use `BINARY_SOURCE=prebuilt` and compiled
 inputs under `dist/amd64` and `dist/arm64`.
+
+## Installer
+
+`scripts/install.sh` installs the latest GitHub Release (native binary by default,
+or the GHCR image with `--docker`). It cannot work until a release exists: push a
+`vX.Y.Z` tag that matches Cargo.toml. After the first image is published, set the
+`ochecore` package's visibility to public on GitHub (Packages settings); otherwise
+`docker pull` needs a login and `--docker` fails for everyone else.

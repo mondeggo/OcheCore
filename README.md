@@ -25,7 +25,8 @@
 </p>
 
 <p align="center">
-  <a href="#run-from-source">Get started</a> ·
+  <a href="#install">Install</a> ·
+  <a href="#run-from-source">Build from source</a> ·
   <a href="#terminal-ui">Terminal UI</a> ·
   <a href="#docker">Docker</a> ·
   <a href="docs/native-api.md">Native API</a> ·
@@ -34,20 +35,67 @@
 
 <br>
 
-Offline Rust board control service, command-line tools, and an interactive terminal
-UI. The control foundation works without cameras or recordings. Camera capture,
-calibration, vision, and verified Autodarts compatibility will be added later.
+Offline Rust board service, command-line tools, and an interactive terminal UI for
+a dartboard watched by one to four USB cameras. Game rules and player management
+belong to the applications that use it.
 
-**Available now:** foreground daemon, local/LAN management, persistent board ID
-and configuration, start/stop/reset/wake, logical standby, bounded native events,
-editable camera-slot settings, diagnostics, and explicit synthetic demo mode.
-There is no live scoring yet. Camera settings are requested values only.
+**Implemented:** foreground daemon, local/LAN management, persistent board ID and
+configuration, start/stop/reset/wake, logical standby, bounded native events,
+camera discovery and V4L2 capture, board calibration from the wire grid,
+single-dart orientation, dart detection from camera frame changes, multi-camera
+fusion, a board-state indicator, diagnostics, and an explicit synthetic demo mode.
 
-## Run from source
+**Not verified:** scoring accuracy with real throws. The detection and
+calibration methods are tested on synthetic images and a few recordings only;
+there are no published accuracy numbers. The Autodarts compatibility adapter is
+not implemented yet. See [the roadmap](oche-core-roadmap.md) and
+[discovery notes](docs/discovery.md).
+
+## Install
+
+On the board computer (Linux, amd64 or arm64):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/mondeggo/ochecore/main/scripts/install.sh | bash
+```
+
+This downloads the latest release, checks its checksum, installs `oche-core` to
+`~/.local/bin`, offers to put your user in the `video` group (needed for cameras),
+runs the first-time setup questions, and can start the service at boot.
+
+To run it in Docker instead, add `--docker`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/mondeggo/ochecore/main/scripts/install.sh | bash -s -- --docker
+```
+
+That installs Docker if it is missing, pulls the release image
+(`ghcr.io/mondeggo/ochecore`), and starts it with Compose in `~/ochecore`, with the
+cameras found at install time passed through. Use `./oche-core remote` in that
+folder to reach the terminal UI. Options: `--version v0.1.0`, `--dir DIR`,
+`--port N`, `--lan` (publish on the network; the API has no login), `--no-system`
+(do not change groups or services), `-y` (accept defaults), `--help`. Run the
+script again to update. It needs a published release; see
+[Releases](https://github.com/mondeggo/ochecore/releases).
+
+### First run
+
+1. `oche-core run` (the installer's boot service does this for you), then
+   `oche-core remote`.
+2. In the UI, choose each camera (name and USB port are shown), then press **Start**.
+3. Empty the board and press **Calibrate all**. The first time, it asks you to throw
+   **one dart at the middle of the 20**; it records where the 20 is in each camera
+   and keeps it. Later calibrations only realign the cameras. Run `oche-core orient`
+   to record the 20 again, for example after moving a camera.
+4. The **State** line shows what the board is doing: `STOPPED`, `STARTING`,
+   `NEEDS SETUP`, `NEEDS CALIBRATION`, `MOTION`, `READY`, `TAKING OUT`,
+   `TAKE OUT DARTS`, or `ERROR` with the cause.
+
+## Build from source
 
 Install Rust with [rustup](https://rustup.rs/). This repository pins Rust 1.90.0,
 rustfmt, and Clippy. Development builds need a Linux C linker (for example,
-`build-essential` on Debian/Ubuntu). No OpenCV or camera SDK is needed yet.
+`build-essential` on Debian/Ubuntu). No OpenCV or camera SDK is needed.
 
 ```sh
 cargo build --locked --release -p oche-cli
@@ -102,6 +150,9 @@ oche-core correct 1 D20              # correct an existing first dart
 oche-core cameras available --json    # devices/modes on the daemon host
 oche-core cameras list --json
 oche-core cameras inspect --camera 1
+oche-core cameras snapshot --camera 1 --out cam1.jpg   # save a frame
+oche-core orient                      # record where the 20 is (one dart)
+oche-core calibrate --all             # empty board; asks for the dart the first time
 ```
 
 `config set` validates and atomically saves through the daemon; board ID is read
@@ -125,11 +176,13 @@ Linux camera discovery queries devices and advertised modes without starting cap
 Only discrete integer FPS values are selectable today; fractional rates and ranged
 modes are reported as limitations. Advertised modes do not prove capture works.
 
-Speed presets: `very_low`, `low`, `default`, `high`, `very_high`. They are saved for
-the future detector and currently have no capture effect. Standby values:
-`0` (disabled), `300`, `600`, `900`, `1800`, or `3600` seconds. Polling does not keep
-the service awake. Start/wake changes the control lifecycle; capture is unavailable.
-`calibrate --camera 1` and `calibrate --all` explicitly report not implemented.
+Speed presets: `very_low`, `low`, `default`, `high`, `very_high` (3, 5, 10, 15 and
+30 analyses per second per camera). Standby values: `0` (disabled), `300`, `600`,
+`900`, `1800`, or `3600` seconds; standby closes the cameras and polling does not
+keep the service awake. `calibrate --camera N` refits one camera against the board
+already measured; `calibrate --all` measures the board's wire radii and fits every
+assigned camera. Both need a running board, an empty and lit board, and the 20
+recorded by `orient`.
 
 JSON goes to stdout; errors/diagnostics go to stderr. Exit codes: `0` success,
 `1` operational error, `2` command-line usage error. Ctrl-C/SIGTERM stops the daemon.
@@ -146,16 +199,16 @@ Click an accepted dart to correct its label (`S1`–`S20`, `D1`–`D20`, `T1`–
 physical occupancy and synthetic provenance, and reject stale visits/restarts.
 A `*` marks corrected darts. Live detection is deferred; test corrections in demo.
 
-Each camera row offers a device dropdown, **Calibrate (N/A)**, resolution, FPS,
-and rotation. Narrow terminals wrap mode controls onto a second line. Choices
-appear in clickable lists; arrows/wheel select and Save applies. Width and height
-are saved atomically. Choose FPS after selecting resolution: resolution changes
-do not silently change saved FPS. Displayed values are requested settings; the
-pickers show currently reported modes. Devices assigned to other slots are
-excluded, including aliases. **+ Add** / **- Remove last** review the new count
-before saving (one to four).
+The first section holds **Start / Stop / Reset / Wake** and the board **State**.
+Settings follow in this order: name, IP address, port, detection speed, standby,
+and number of cameras. Each camera row shows the camera's name and USB port with a
+**Calibrate** button; **Calibrate all**, **Resolution** and **FPS** (applied to
+every assigned camera, showing the current values) sit below the cameras. Choices
+appear in clickable lists; arrows/wheel select and Save applies. Devices assigned
+to other slots are excluded, including aliases. **+ Add** / **- Remove last**
+review the new count before saving (one to four). Rotation, exposure and the 20
+reference are not on the screen; use `oche-core config set` and `oche-core orient`.
 
-Calibration remains unimplemented; its button explains that and changes nothing.
 Missing devices, permissions, or mode data are reported when opening a picker.
 Discovery runs on the daemon machine, refreshes every five seconds, and does not
 block the control worker. There are no guessed fallback camera capabilities.
@@ -167,7 +220,8 @@ full payloads or an ongoing diagnostic recording.
 | Key | Action |
 | --- | --- |
 | Tab / Shift-Tab, or 1 / 2 | Switch Board / Events |
-| s / x / r / w | Start / stop / reset visit / wake (no toolbar) |
+| s / x / r / w | Start / stop / reset visit / wake |
+| c / o | Calibrate all (asks for the dart first time) / record the 20 again |
 | Up / Down | Select setting, dart, or camera; scroll in Events |
 | PageUp / PageDown, Home / End | Scroll |
 | + / - | Add camera / remove last |
@@ -186,8 +240,8 @@ responsive during network failures. Stale data is labeled disconnected and
 controls are disabled until connectivity returns.
 
 Detection options and their calibration requirements are described in
-[the detection proposal](docs/detection-algorithms.md). They are planned methods,
-not active detector choices; live capture and calibration are still unavailable.
+[the detection proposal](docs/detection-algorithms.md). Which of them is active,
+and how well it works on real throws, is not yet established.
 
 ## Try a visit without cameras
 
@@ -280,12 +334,13 @@ docker compose up -d --no-build
 ```
 
 The final image contains a static executable and notices, runs as UID/GID 65532,
-and needs no shell, compiler, Internet, or camera permissions. `/data` must be
+and needs no shell, compiler, or Internet. Cameras need the device mapping below. `/data` must be
 writable; the rest of the filesystem can be read only. `docker compose down -v`
 does not delete the host data folder. For discovery, explicitly map devices with
 `--device /dev/videoN` (Compose `devices`) and grant the container user the device
 group using `--group-add` / `group_add`. Only accessible mapped devices can be
-queried; privileged mode is unnecessary. Capture remains unimplemented.
+queried or captured; privileged mode is unnecessary. `scripts/install.sh --docker`
+writes a Compose file that does this for the cameras it finds.
 
 ## Development and releases
 

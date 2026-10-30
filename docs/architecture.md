@@ -34,7 +34,7 @@ and compatibility claims; it does not gate the native control foundation.
   Existing or invalid files are never silently replaced. `config reset` uses
   the same exclusive lock and atomic save, requires confirmation or `--yes`, and deliberately generates a
   new board ID. Cancelling or invalid input cannot partially replace settings.
-- **Explicit demo mode:** every throw is synthetic. Normal mode reports unknown
+- **Explicit demo mode:** every throw is synthetic. Control-only mode reports unknown
   occupancy and unavailable capture/calibration/vision. Camera modes are requested
   configuration, not verified hardware capabilities.
 - **Static musl releases:** Linux AMD64/ARM64 executables without a host glibc
@@ -119,6 +119,24 @@ and compatibility claims; it does not gate the native control foundation.
   with the first, empty, still period. All thresholds are exploratory defaults
   in `darts::Settings`, not validated values. Live processing, partial-takeout
   logic, and robust shaft fitting are not implemented.
+
+- **Live pipeline (`oche-capture`, `oche-vision::live`, `oche-engine::live`):**
+  `run` defaults to live mode. While the board is running, a supervisor keeps
+  one capture thread per assigned camera and one detector thread; stop,
+  standby, or any change to camera settings, detection speed, or calibration
+  closes and reopens them. Capture threads dequeue every frame but decode only
+  frames due for analysis, directly to luminance (9.5 ms per 1280x720 frame on
+  a Pi 4 core against 21.5 ms for RGB plus conversion, measured 2026-10-30), and
+  hand them over through a bounded queue that drops when full. Detection speed
+  presets map to 3/5/10/15/30 analyses per second per camera; the default 10 is
+  about a third of one Pi 4 core for three cameras. The engine lock is never
+  held during capture, decoding, or calibration. `oche-replay darts` replays
+  recordings through the same detector at the same rate.
+- **Takeout:** darts leave holes, so the board counts as empty when a majority
+  of cameras still differ from the last empty board by at most 25% of the
+  pixels this visit's arrivals changed; the empty reference restarts after
+  each takeout. References refresh when motion starts so lighting drift during
+  long pauses is not counted. These rules were set on the 2026-10-29 sessions.
 
 Standby changes the control lifecycle only; speed presets have no processing
 effect until capture/vision exists. No Autodarts adapter is advertised before
