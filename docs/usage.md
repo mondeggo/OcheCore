@@ -82,8 +82,9 @@ stays quiet. `oche-core run --help` lists the options.
 
 To see why a dart was or was not placed, add `--debug-images DIR`: each arrival
 saves `arrival-NNNN-cameraK.png` per camera into `DIR` (the newest 30 arrivals are
-kept), showing the frame with the changed pixels in red, the fitted dart line in
-cyan, and the tip in green when a flight in view settled it. The files are
+kept), showing the frame with the newly covered pixels (the ones the line is fitted to;
+darts already on the board are excluded even if their flights moved) in red, the
+fitted dart line in cyan, and the tip in green when a flight in view settled it. The files are
 uncompressed PNGs of the full frame, so keep `DIR` outside the repository.
 
 JSON goes to stdout; errors/diagnostics go to stderr. Exit codes: `0` success,

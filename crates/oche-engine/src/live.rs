@@ -537,9 +537,10 @@ fn describe(event: &Event, board: &BoardDimensions) -> String {
                     (None, None) => "no region".to_string(),
                 };
                 format!(
-                    "camera {}: {} px changed, score {:.1}, {region}, {}",
+                    "camera {}: {} px changed ({} new), score {:.1}, {region}, {}",
                     c.slot,
                     c.changed_pixels,
+                    c.fresh_pixels,
                     c.arrival_score,
                     if c.line.is_some() { "line" } else { "no line" }
                 )
@@ -603,9 +604,10 @@ fn explain(abstention: &Abstention, changes: &[CameraChange]) -> String {
         .iter()
         .map(|c| {
             format!(
-                "camera {}: {} px changed, {}",
+                "camera {}: {} px changed ({} new), {}",
                 c.slot,
                 c.changed_pixels,
+                c.fresh_pixels,
                 if c.line.is_some() { "line" } else { "no line" }
             )
         })

@@ -85,6 +85,9 @@ impl Default for Settings {
 pub struct CameraChange {
     pub slot: u8,
     pub changed_pixels: usize,
+    /// Of those, the pixels newly covered since the last scene: what the dart
+    /// line is fitted to.
+    pub fresh_pixels: usize,
     /// Positive when the new scene differs more from the empty board than the
     /// previous scene did, i.e. something arrived.
     pub arrival_score: f64,
@@ -375,14 +378,27 @@ fn change(
             .sum::<f64>()
             / changed_pixels as f64
     };
+    // Darts already on the board shift a little when a new one lands, and their
+    // printed flights then change everywhere. Only pixels that now differ from
+    // the empty board but did not before belong to the new dart.
+    let fresh: Vec<bool> = mask
+        .iter()
+        .enumerate()
+        .map(|(i, &changed)| {
+            changed
+                && after.data[i].abs_diff(empty.data[i]) > settings.change_threshold
+                && before.data[i].abs_diff(empty.data[i]) <= settings.change_threshold
+        })
+        .collect();
+    let fresh_pixels = fresh.iter().filter(|m| **m).count();
     // Group nearby pieces of one dart (flight, shaft, barrel) that small gaps
     // in the mask split apart, but fit only changed pixels.
-    let grouped = dilate(&mask, after.width, after.height, settings.group_radius);
+    let grouped = dilate(&fresh, after.width, after.height, settings.group_radius);
     let (labels, regions) = label(&grouped, after.width);
     let points_of = |label: u32| {
         labels
             .iter()
-            .zip(&mask)
+            .zip(&fresh)
             .enumerate()
             .filter(move |(_, (l, m))| **l == label && **m)
             .map(|(i, _)| ((i % after.width) as f64, (i / after.width) as f64))
@@ -455,13 +471,14 @@ fn change(
     CameraChange {
         slot: camera.slot,
         changed_pixels,
+        fresh_pixels,
         arrival_score,
         region,
         shaft,
         line,
         image_line,
         tip: flight.map(|(_, tip)| tip),
-        detail: keep_detail.then(|| (mask, after.clone())),
+        detail: keep_detail.then(|| (fresh, after.clone())),
     }
 }
 
@@ -533,6 +550,67 @@ mod tests {
             }
         }
         image
+    }
+
+    /// A small striped patch like a printed flight, `shift` px to the right.
+    fn striped_flight(image: &mut GrayImage, left: usize, top: usize, shift: usize) {
+        for y in top..top + 18 {
+            for x in left..left + 18 {
+                let stripe = ((x + shift) / 2).is_multiple_of(2);
+                image.data[y * image.width + x] = if stripe { 20 } else { 235 };
+            }
+        }
+    }
+
+    #[test]
+    fn a_neighbouring_dart_whose_flight_shifted_does_not_skew_the_new_dart() {
+        let mut detector = Detector::new(
+            vec![(1, Some(Box::new(Offset))), (2, Some(Box::new(Offset)))],
+            Settings::default(),
+        );
+        let mut t = 0.0;
+        let empty = frame(&[]);
+        let _ = feed(&mut detector, &mut t, &empty, 2.0);
+        // First dart: a striped flight on camera 1 where the next dart's tip will
+        // land, and a plain dart far away on camera 2.
+        let mut first_1 = empty.clone();
+        striped_flight(&mut first_1, 88, 103, 0);
+        let first_2 = frame(&[((30.0, 160.0), (60.0, 190.0))]);
+        for _ in 0..20 {
+            let _ = detector.push(1, t, first_1.clone());
+            let _ = detector.push(2, t, first_2.clone());
+            t += 0.1;
+        }
+        // Second dart: the first one's flight shifts one pixel on camera 1.
+        let mut second_1 = flighted_frame((100.0, 100.0), (150.0, 40.0));
+        striped_flight(&mut second_1, 88, 103, 1);
+        let mut second_2 = flighted_frame((100.0, 100.0), (40.0, 30.0));
+        for (x, y) in [(30, 160), (45, 175), (60, 190)] {
+            second_2.data[y * 200 + x] = 20;
+        }
+        let mut events = Vec::new();
+        let end = t + 2.0;
+        while t < end {
+            events.extend(detector.push(1, t, second_1.clone()));
+            events.extend(detector.push(2, t, second_2.clone()));
+            t += 0.1;
+        }
+        let [
+            Event::Arrival {
+                impact, changes, ..
+            },
+        ] = events.as_slice()
+        else {
+            panic!("expected one arrival, got {}", events.len());
+        };
+        // The tip is the new dart's, not the neighbour's far corner at (88, 121).
+        let tip = changes[0].tip.expect("a flight is in view");
+        assert!(
+            (tip.0 - 100.0).abs() < 3.0 && (tip.1 - 100.0).abs() < 3.0,
+            "{tip:?}"
+        );
+        let point = impact.as_ref().expect("two lines through the bull").point;
+        assert!(point.x.abs() < 1.5 && point.y.abs() < 1.5, "{point:?}");
     }
 
     #[test]
