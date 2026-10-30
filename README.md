@@ -69,16 +69,21 @@ Options, building from source, and Docker Compose are in
 
 ### First run
 
-1. `oche-core run` (the installer's boot service does this for you), then
-   `oche-core remote`.
-2. In the UI, choose each camera (name and USB port are shown), then press **Start**.
-3. Empty the board and press **Calibrate all**. The first time, it asks you to throw
-   **one dart at the middle of the 20**; it records where the 20 is in each camera
-   and keeps it. Later calibrations only realign the cameras. Run `oche-core orient`
-   to record the 20 again, for example after moving a camera.
-4. The **State** line shows what the board is doing: `STOPPED`, `STARTING`,
-   `NEEDS SETUP`, `NEEDS CALIBRATION`, `MOTION`, `READY`, `TAKING OUT`,
-   `TAKE OUT DARTS`, or `ERROR` with the cause.
+1. Start the service with `oche-core run` (the installer's boot service already
+   does this), then open the terminal UI with `oche-core remote`.
+2. Choose each camera (its name and USB port are shown) and press **Start**. The
+   same can be done from the command line with `oche-core cameras available`,
+   `oche-core config set cameras.1.device …` and `oche-core start`; see
+   [Using OcheCore](docs/usage.md#commands).
+3. Empty the board and press **Calibrate all** (`oche-core calibrate --all`). The
+   first time, it asks you to throw **one dart at the middle of the 20**. It
+   records where the 20 is in each camera and keeps it; later calibrations only
+   realign the cameras. Run `oche-core orient` to record the 20 again, for example
+   after moving a camera.
+4. When the **State** line shows `READY`, throw. Each dart is detected locally
+   and appears in the UI and in `oche-core events`; pull the darts out to finish
+   the visit. The states and what they mean are listed in
+   [Using OcheCore](docs/usage.md#board-state).
 
 ## Documentation
 

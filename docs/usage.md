@@ -98,6 +98,25 @@ Missing devices, permissions, or mode data are reported when opening a picker.
 Discovery runs on the daemon machine, refreshes every five seconds, and does not
 block the control worker. There are no guessed fallback camera capabilities.
 
+### Board state
+
+The **State** line under the control buttons (and `oche-core status`) reports what
+the board is doing, in the way Autodarts-style clients show it:
+
+| State | Meaning |
+| --- | --- |
+| `STOPPED` | The board is stopped and the cameras are closed. Press Start. |
+| `STANDBY` | Standby closed the cameras after inactivity. Press Wake. |
+| `STARTING` | Waiting for a camera to deliver frames, or for the first still scene. |
+| `NEEDS SETUP` | A camera has no device, or the 20 has not been recorded yet. |
+| `NEEDS CALIBRATION` | Cameras are streaming but not calibrated (at least two are needed to score). |
+| `MOTION` | The cameras see movement; the scene is waiting to settle. |
+| `READY` | Calibrated and still; the board is empty or holds darts that count. |
+| `TAKING OUT` | Darts are being removed; the visit ends when the board is empty. |
+| `TAKE OUT DARTS` | Three darts are accepted; remove them. |
+| `ERROR` | A camera failed; the line names the camera and the cause. |
+| `CONTROLS ONLY` | Running without cameras (`--no-capture`). |
+
 Events retains up to 64 native events with sequence/time, session/board IDs,
 state, revision, scene, occupancy, and visit. Use `oche-core events --json` for
 full payloads or an ongoing diagnostic recording.
