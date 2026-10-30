@@ -80,9 +80,10 @@ Options, building from source, and Docker Compose are in
    records where the 20 is in each camera and keeps it; later calibrations only
    realign the cameras. Run `oche-core orient` to record the 20 again, for example
    after moving a camera.
-4. When the **State** line shows `READY`, throw. Each dart is detected locally
-   and appears in the UI and in `oche-core events`; pull the darts out to finish
-   the visit. The states and what they mean are listed in
+4. When the **State** line shows `READY`, you're set. Throw as usual: every dart
+   is detected on this machine, with no account or Internet, and shows up live in
+   the UI and in `oche-core events`. Pull the darts out when the visit is done.
+   The states and what they mean are listed in
    [Using OcheCore](docs/usage.md#board-state).
 
 ## Documentation
