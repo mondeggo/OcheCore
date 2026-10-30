@@ -63,6 +63,12 @@ pub struct Homography {
     to_image: Matrix3,
 }
 
+impl oche_vision::live::LineMapper for Homography {
+    fn line_to_board(&self, a: (f64, f64), b: (f64, f64)) -> Option<BoardLine> {
+        Homography::line_to_board(self, Pixel::new(a.0, a.1), Pixel::new(b.0, b.1))
+    }
+}
+
 /// Board-plane residuals between mapped image points and their reference points.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Residuals {

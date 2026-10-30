@@ -42,6 +42,9 @@ pub struct Settings {
     pub radial_clearance_deg: f64,
     /// Ring whose radius stays fixed to set the scale (index into [`RINGS`]).
     pub fixed_ring: usize,
+    /// Measure the ring radii; when false they stay at the starting board,
+    /// for recalibrating one camera against an already measured board.
+    pub fit_radii: bool,
     pub rounds: usize,
 }
 
@@ -54,6 +57,7 @@ impl Default for Settings {
             angle_step_deg: 0.5,
             radial_clearance_deg: 2.0,
             fixed_ring: 5,
+            fit_radii: true,
             rounds: 4,
         }
     }
@@ -79,6 +83,8 @@ pub struct ViewFit {
     pub ring_points: [usize; 6],
     pub radial_rms_mm: f64,
     pub radial_points: usize,
+    /// Over all wire points of this view.
+    pub rms_mm: f64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -439,7 +445,9 @@ pub fn refine(
     }
     let mut radii = start.radii();
     let mut mappings: Vec<Homography> = views.iter().map(|(_, h)| *h).collect();
-    let free: Vec<usize> = (0..6).filter(|&r| r != settings.fixed_ring).collect();
+    let free: Vec<usize> = (0..6)
+        .filter(|&r| settings.fit_radii && r != settings.fixed_ring)
+        .collect();
     let mut points = Vec::new();
     let mut use_point = Vec::new();
     for _ in 0..settings.rounds {
@@ -525,11 +533,13 @@ pub fn refine(
                     (sum / n as f64).sqrt()
                 }
             };
+            let points = ring_points.iter().sum::<usize>() + radial_points;
             ViewFit {
                 ring_rms_mm: std::array::from_fn(|r| rms(ring_sum[r], ring_points[r])),
                 ring_points,
                 radial_rms_mm: rms(radial_sum, radial_points),
                 radial_points,
+                rms_mm: rms(ring_sum.iter().sum::<f64>() + radial_sum, points),
             }
         })
         .collect();
