@@ -61,13 +61,24 @@ Linux camera discovery queries devices and advertised modes without starting cap
 Only discrete integer FPS values are selectable today; fractional rates and ranged
 modes are reported as limitations. Advertised modes do not prove capture works.
 
-Speed presets: `very_low`, `low`, `default`, `high`, `very_high` (3, 5, 10, 15 and
-30 analyses per second per camera). Standby values: `0` (disabled), `300`, `600`,
+Speed presets: `very_low`, `low`, `default`, `high`, `very_high`: 3, 5, 10, 15 and
+30 analysed frames per second per camera, never more than the camera's FPS.
+Capture always runs at the configured FPS; the preset only sets how many frames
+are decoded and compared. A 1280x720 decode took about 17 ms on one Raspberry Pi 4
+core (measured 2026-10-30), so `default` with three cameras costs roughly half a
+core. Whether higher speeds detect darts better or faster has not been measured. Standby values: `0` (disabled), `300`, `600`,
 `900`, `1800`, or `3600` seconds; standby closes the cameras and polling does not
 keep the service awake. `calibrate --camera N` refits one camera against the board
 already measured; `calibrate --all` measures the board's wire radii and fits every
 assigned camera. Both need a running board, an empty and lit board, and the 20
 recorded by `orient`.
+
+To watch what the daemon does, run it with `--log`: `oche-core run --log info`
+prints every native event as it happens (the same events as `oche-core events`,
+with the reason when a dart cannot be placed), and `--log debug` adds what the
+detector sees: moving and still scenes, changed pixels per camera, whether a dart
+line was found, the fused impact, and abstentions. Without `--log` the daemon
+stays quiet. `oche-core run --help` lists the options.
 
 JSON goes to stdout; errors/diagnostics go to stderr. Exit codes: `0` success,
 `1` operational error, `2` command-line usage error. Ctrl-C/SIGTERM stops the daemon.
@@ -82,17 +93,29 @@ when needed.
 Click an accepted dart to correct its label (`S1`–`S20`, `D1`–`D20`, `T1`–`T20`,
 `SB`, `DB`, or `MISS`). Empty slots cannot invent throws. Corrections preserve
 physical occupancy and synthetic provenance, and reject stale visits/restarts.
-A `*` marks corrected darts. Live detection is deferred; test corrections in demo.
+A `*` marks corrected darts. A `?` dart was seen but could not be placed; the reason
+and what each camera saw are listed under the dart slots.
 
-The first section holds **Start / Stop / Reset / Wake** and the board **State**.
-Settings follow in this order: name, IP address, port, detection speed, standby,
-and number of cameras. Each camera row shows the camera's name and USB port with a
-**Calibrate** button; **Calibrate all**, **Resolution** and **FPS** (applied to
-every assigned camera, showing the current values) sit below the cameras. Choices
-appear in clickable lists; arrows/wheel select and Save applies. Devices assigned
-to other slots are excluded, including aliases. **+ Add** / **- Remove last**
-review the new count before saving (one to four). Rotation, exposure and the 20
-reference are not on the screen; use `oche-core config set` and `oche-core orient`.
+The screen has five sections, top to bottom:
+
+1. **Board settings:** name, IP address and port (saved ports and addresses take
+   effect after a restart).
+2. **Darts:** the three slots of the current visit, notes on any unplaced dart, and
+   a one-line detection summary.
+3. **Controls:** **Start / Stop / Reset / Wake**, the board **State**, and a
+   **Doing** line with an elapsed timer while a command runs (for example
+   "Calibrating all cameras; keep the board empty and still").
+4. **Cameras:** each row shows the camera's name and USB port (`v` marks a
+   dropdown) with a **Calibrate** button. **+ Add** / **- Remove last** change the
+   camera count (one to four) after a review; **Calibrate all** sits below.
+5. **Detection settings:** detection speed, standby time, and the resolution and FPS
+   applied to every assigned camera (they show `mixed` when the cameras differ).
+   Each is a dropdown.
+
+Choices appear in clickable lists; arrows or the wheel select and Save applies.
+Devices assigned to other slots are excluded, including aliases. Rotation,
+exposure and the 20 reference are not on the screen; use `oche-core config set`
+and `oche-core orient`.
 
 Missing devices, permissions, or mode data are reported when opening a picker.
 Discovery runs on the daemon machine, refreshes every five seconds, and does not
