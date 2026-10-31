@@ -890,7 +890,7 @@ dependencies = [
 
 [[package]]
 name = "oche-api"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -907,7 +907,7 @@ dependencies = [
 
 [[package]]
 name = "oche-calibration"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "oche-domain",
  "oche-vision",
@@ -916,7 +916,7 @@ dependencies = [
 
 [[package]]
 name = "oche-capture"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "linux-video",
  "oche-domain",
@@ -925,7 +925,7 @@ dependencies = [
 
 [[package]]
 name = "oche-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -945,7 +945,7 @@ dependencies = [
 
 [[package]]
 name = "oche-domain"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "uuid",
@@ -953,7 +953,7 @@ dependencies = [
 
 [[package]]
 name = "oche-engine"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "fs2",
@@ -970,7 +970,7 @@ dependencies = [
 
 [[package]]
 name = "oche-replay"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -984,7 +984,7 @@ dependencies = [
 
 [[package]]
 name = "oche-vision"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "oche-domain",
  "serde",
