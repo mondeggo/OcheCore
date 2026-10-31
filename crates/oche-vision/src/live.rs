@@ -50,6 +50,9 @@ pub struct Settings {
     /// Removed pixels within this distance of a solid shape are kept, so thin
     /// junctions of the new dart (shaft to flight) are not cut.
     pub fresh_reconnect_px: usize,
+    /// Apply that filter only within this distance of old-dart pixels (their
+    /// displaced edges are what it removes); 0 applies it everywhere.
+    pub thin_near_old_px: usize,
     /// Choose the dart's pieces by a line instead of by size: the line covering
     /// the most length over all fresh pixels is found first, and every group it
     /// passes through with at least `line_select_min_px` pixels is kept.
@@ -105,6 +108,7 @@ impl Default for Settings {
             move_max_deg: 3.0,
             fresh_open_radius: 1,
             fresh_reconnect_px: 3,
+            thin_near_old_px: 8,
             select_by_line: true,
             line_select_min_px: 20,
             join_aligned: true,
@@ -462,6 +466,7 @@ fn change(
     // now, so their shift is not mistaken for the new dart.
     let mut moves = Vec::new();
     let mut raw_fresh = None;
+    let mut corrected_scene = None;
     if s.compensate_moves && arrival_score > 0.0 {
         let (corrected, found) = compensate(
             before,
@@ -477,18 +482,34 @@ fn change(
         if !found.is_empty() {
             raw_fresh = Some(fresh_against(&corrected));
             moves = found;
+            corrected_scene = Some(corrected);
         }
     }
     let raw_fresh = raw_fresh.unwrap_or_else(|| fresh_against(before));
     // A nudged dart only uncovers or covers a sliver along its edges, while the
-    // new dart is a solid silhouette: keep the second.
-    let fresh = remove_thin(
+    // new dart is a solid silhouette: keep the second. Only next to old darts:
+    // elsewhere a thin piece can only be the new dart, seen from afar.
+    let mut fresh = remove_thin(
         &raw_fresh,
         width,
         height,
         s.fresh_open_radius,
         s.fresh_reconnect_px,
     );
+    if s.thin_near_old_px > 0 {
+        let reference = corrected_scene.as_ref().unwrap_or(before);
+        let near_old = dilate(
+            &reference.changed(empty, threshold),
+            width,
+            height,
+            s.thin_near_old_px,
+        );
+        for ((kept, raw), near) in fresh.iter_mut().zip(&raw_fresh).zip(&near_old) {
+            if !near {
+                *kept = *raw;
+            }
+        }
+    }
     let fresh_pixels = fresh.iter().filter(|m| **m).count();
     // Group nearby pieces of one dart (flight, shaft, barrel) that small gaps
     // in the mask split apart, but fit only changed pixels.

@@ -107,18 +107,19 @@ and compatibility claims; it does not gate the native control foundation.
   arrival: (1) each old dart (pixels of the previous scene that differ from the
   empty board) is moved as one rigid body, by the rotation (up to 3°) and
   translation (up to 5 px) that best explains the new scene, and the newly
-  covered pixels are taken against that corrected scene; (2) lines narrower
-  than 3 px are removed from that mask, keeping pixels within 3 px of solid
-  shapes; (3) the dart's pieces are the groups on the line covering the most
-  length over all newly covered pixels (RANSAC scored by covered length, so a
-  long thin dart beats a short fat flight); (4) the shaft centre line is fitted
-  with the flight set aside; (5) sequential RANSAC on the shaft and barrel
-  gives up to two alternative lines, which the fusion tries when the main lines
-  disagree or a shaft fit scatters by more than 3 px RMS, taking a combination
-  only when three cameras then agree. The extra work is about 110 ms per arrival
-  for three 1280x720 cameras in `oche-replay` on a desktop (measured
-  2026-10-31; not yet measured on a Pi). Developed against a Python prototype;
-  see the grouped-dart evidence in `docs/discovery.md`.
+  covered pixels are taken against that corrected scene; (2) within 8 px of
+  old-dart pixels, lines narrower than 3 px are removed from that mask, keeping
+  pixels within 3 px of solid shapes (elsewhere a thin piece can only be the new
+  dart seen from afar); (3) the dart's pieces are the groups on the line
+  covering the most length over all newly covered pixels (RANSAC scored by
+  covered length, so a long thin dart beats a short fat flight); (4) the shaft
+  centre line is fitted with the flight set aside; (5) sequential RANSAC on the
+  shaft and barrel gives up to two alternative lines, which the fusion tries
+  when the main lines disagree or a shaft fit scatters by more than 3 px RMS,
+  taking a combination only when three cameras then agree. The extra work is
+  about 110 ms per arrival for three 1280x720 cameras in `oche-replay` on a
+  desktop (measured 2026-10-31; not yet measured on a Pi). Developed against a
+  Python prototype; see the grouped-dart evidence in `docs/discovery.md`.
 - **JPEG decoding (`oche-vision::image`):** `zune-jpeg` 0.5.15 with `zune-core`
   0.5.3 (MIT OR Apache-2.0 OR Zlib), pure Rust. Its SIMD paths use `unsafe`
   for platform intrinsics inside the dependency; workspace crates remain

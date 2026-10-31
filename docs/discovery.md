@@ -235,7 +235,11 @@ gave 18/22 and 19/22 of these results (in visit3 all three confirmed darts and
 one more were wrong or abstained; in visit4 it abstained on three, two of them
 confirmed); with it, 22/22 in both, all fused from three agreeing cameras.
 visit3 was used to develop the method and visit4 to check it, so neither is a
-held-out accuracy measurement.
+held-out accuracy measurement. Replayed the same way, `visit1-labelled` and
+the 18 recorded darts of `visit2-heldout` still match all their labels (12/12,
+18/18); the first version of this change abstained on the visit2 D20, which
+one camera sees only 1-2 px wide, until the thin-line removal was limited to
+the neighbourhood of old darts.
 
 - [ ] Confirm the measured radii with a ruler (treble inner wire diameter
   about 192.8 mm on this board).
