@@ -224,6 +224,19 @@ recorded darts in `visit2-heldout` match the labels, including the T3 that the
 nominal board scored as S3. Both sessions informed development, so these are no
 longer held-out results. Three-camera line agreement is 0.14 and 0.23 mm RMS.
 
+Grouped darts (2026-10-30 `visit3-grouped` and `visit4-grouped`, 22 single-dart
+arrivals each; a visit3 arrival where three darts landed without the board
+settling is excluded). The operator confirmed six results by eye (visit3: S10,
+S10, S15; visit4: S10, S13, S10, two of them darts lying flat against an old
+dart) and did not dispute the rest, which are detector outputs rather than
+independent labels. Replayed with `oche-replay darts` at 10 Hz and a fresh
+calibration per session, the detector before the dart line extraction above
+gave 18/22 and 19/22 of these results (in visit3 all three confirmed darts and
+one more were wrong or abstained; in visit4 it abstained on three, two of them
+confirmed); with it, 22/22 in both, all fused from three agreeing cameras.
+visit3 was used to develop the method and visit4 to check it, so neither is a
+held-out accuracy measurement.
+
 - [ ] Confirm the measured radii with a ruler (treble inner wire diameter
   about 192.8 mm on this board).
 - [ ] Record more held-out labelled sessions, including grouped darts and

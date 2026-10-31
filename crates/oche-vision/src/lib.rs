@@ -11,6 +11,7 @@
 //! abstains. Poor observations should be filtered before fusion by their own
 //! feature quality.
 
+pub mod compensate;
 pub mod image;
 pub mod live;
 pub mod mask;

@@ -177,24 +177,54 @@ const MIN_FLIGHT_PIXELS: usize = 300;
 /// The barrel must reach this far past the flight's own radius.
 const MIN_BARREL_PX: f64 = 20.0;
 
-/// With a flight in view: its centre and the tip, the changed pixel farthest
+/// The wide, solid part of a silhouette: a flight seen face-on or obliquely.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Flight {
+    pub centre: (f64, f64),
+    pub radius: f64,
+    /// The opened mask, `width` x `height`, whose top-left pixel is image pixel
+    /// `origin` (which may lie outside the image).
+    pub mask: Vec<bool>,
+    pub width: usize,
+    pub height: usize,
+    pub origin: (i64, i64),
+}
+
+impl Flight {
+    /// Whether image pixel `(x, y)` lies within `margin` px of the flight.
+    pub fn covers(&self, x: f64, y: f64, margin: usize) -> bool {
+        let (lx, ly) = (x as i64 - self.origin.0, y as i64 - self.origin.1);
+        let m = margin as i64;
+        for yy in (ly - m).max(0)..=(ly + m).min(self.height as i64 - 1) {
+            for xx in (lx - m).max(0)..=(lx + m).min(self.width as i64 - 1) {
+                if self.mask[yy as usize * self.width + xx as usize] {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+}
+
+/// With a flight in view: the flight and the tip, the changed pixel farthest
 /// from it, provided the barrel reaches `MIN_BARREL_PX` past the flight. The
 /// grouped pixels close small gaps in the flight's printed pattern.
 pub fn flight_and_tip(
     points: &[(f64, f64)],
     grouped: &[(usize, usize)],
-) -> Option<((f64, f64), (f64, f64))> {
-    let (centre, flight_radius) = flight_of(grouped)?;
+) -> Option<(Flight, (f64, f64))> {
+    let flight = flight_of(grouped)?;
+    let centre = flight.centre;
     let (tip, distance) = points
         .iter()
         .map(|p| (*p, (p.0 - centre.0).hypot(p.1 - centre.1)))
         .max_by(|a, b| a.1.total_cmp(&b.1))?;
-    (distance - flight_radius >= MIN_BARREL_PX).then_some((centre, tip))
+    (distance - flight.radius >= MIN_BARREL_PX).then_some((flight, tip))
 }
 
-/// Centroid and radius of the wide, solid part of a silhouette (the flight),
-/// found by morphological opening: the barrel and shaft are too thin to survive.
-fn flight_of(pixels: &[(usize, usize)]) -> Option<((f64, f64), f64)> {
+/// The wide, solid part of a silhouette (the flight), found by morphological
+/// opening: the barrel and shaft are too thin to survive.
+fn flight_of(pixels: &[(usize, usize)]) -> Option<Flight> {
     let radius = FLIGHT_OPENING;
     let x0 = pixels.iter().map(|p| p.0).min()?;
     let y0 = pixels.iter().map(|p| p.1).min()?;
@@ -221,13 +251,17 @@ fn flight_of(pixels: &[(usize, usize)]) -> Option<((f64, f64), f64)> {
         sy += (i / w) as f64;
     }
     let n = count as f64;
-    Some((
-        (
+    Some(Flight {
+        centre: (
             sx / n + x0 as f64 - radius as f64,
             sy / n + y0 as f64 - radius as f64,
         ),
-        (n / std::f64::consts::PI).sqrt(),
-    ))
+        radius: (n / std::f64::consts::PI).sqrt(),
+        mask: opened,
+        width: w,
+        height: h,
+        origin: (x0 as i64 - radius as i64, y0 as i64 - radius as i64),
+    })
 }
 
 /// Finds the largest elongated object that arrived between two frames and
@@ -278,9 +312,9 @@ pub fn dart_ends(
         .filter(|(_, l)| **l == label)
         .map(|(i, _)| (i % after.width, i / after.width))
         .collect();
-    if let Some((centre, tip)) = flight_and_tip(&points, &grouped_pixels) {
+    if let Some((flight, tip)) = flight_and_tip(&points, &grouped_pixels) {
         return Ok(DartEnds {
-            ends: [centre, tip],
+            ends: [flight.centre, tip],
             tip: Some(1),
         });
     }
@@ -348,6 +382,81 @@ pub fn dilate(mask: &[bool], width: usize, height: usize, radius: usize) -> Vec<
         }
     }
     out
+}
+
+/// Keeps only pixels whose whole `radius` (Chebyshev) neighbourhood is set;
+/// pixels outside the image count as unset.
+pub fn erode(mask: &[bool], width: usize, height: usize, radius: usize) -> Vec<bool> {
+    if radius == 0 {
+        return mask.to_vec();
+    }
+    let full = 2 * radius + 1;
+    // Separable: a pixel survives a pass when every pixel in its window is set.
+    let pass = |input: &[bool], along_rows: bool| {
+        let (lines, len) = if along_rows {
+            (height, width)
+        } else {
+            (width, height)
+        };
+        let index = |line: usize, k: usize| {
+            if along_rows {
+                line * width + k
+            } else {
+                k * width + line
+            }
+        };
+        let mut out = vec![false; input.len()];
+        let mut prefix = vec![0usize; len + 1];
+        for line in 0..lines {
+            for k in 0..len {
+                prefix[k + 1] = prefix[k] + usize::from(input[index(line, k)]);
+            }
+            for k in radius..len.saturating_sub(radius) {
+                out[index(line, k)] = prefix[k + radius + 1] - prefix[k - radius] == full;
+            }
+        }
+        out
+    };
+    pass(&pass(mask, true), false)
+}
+
+/// Removes lines narrower than `2 * radius + 1` px from `mask` but keeps solid
+/// shapes whole.
+///
+/// A dart nudged by the new one shows up in the fresh mask as a thin outline
+/// along its edges, while the new dart is a solid silhouette. A closing first
+/// fills the small gaps of a striped shape (a knurled barrel) so the opening
+/// does not erase it, and pixels within `reconnect` px of what survives are put
+/// back so thin junctions inside a shape stay connected. Only pixels of `mask`
+/// are ever returned.
+pub fn remove_thin(
+    mask: &[bool],
+    width: usize,
+    height: usize,
+    radius: usize,
+    reconnect: usize,
+) -> Vec<bool> {
+    if radius == 0 {
+        return mask.to_vec();
+    }
+    let grown = dilate(mask, width, height, radius);
+    let closed: Vec<bool> = erode(&grown, width, height, radius)
+        .iter()
+        .zip(mask)
+        .map(|(c, m)| *c || *m)
+        .collect();
+    let opened = dilate(
+        &erode(&closed, width, height, radius),
+        width,
+        height,
+        radius,
+    );
+    let core: Vec<bool> = opened.iter().zip(&closed).map(|(o, c)| *o && *c).collect();
+    dilate(&core, width, height, reconnect)
+        .iter()
+        .zip(mask)
+        .map(|(near, m)| *near && *m)
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -571,6 +680,295 @@ fn fit_line(samples: &[(f64, f64)]) -> Option<(f64, f64)> {
     Some((mm - b * mt, b))
 }
 
+/// The points in slices across `axis` no wider than `max_width_ratio` times
+/// the narrow-quartile width: the shaft and barrel without the flight, by the
+/// same rule as [`shaft_axis`], so a flight seen edge-on (too thin to be found
+/// as a flight) is left out as well.
+pub fn narrow_points(points: &[(f64, f64)], axis: &Axis, max_width_ratio: f64) -> Vec<(f64, f64)> {
+    if points.is_empty() {
+        return Vec::new();
+    }
+    let (c, d) = (axis.centroid, axis.direction);
+    let slice = |p: &(f64, f64)| {
+        let (dx, dy) = (p.0 - c.0, p.1 - c.1);
+        ((dx * d.0 + dy * d.1).floor() as i64, -dx * d.1 + dy * d.0)
+    };
+    let mut slices: std::collections::BTreeMap<i64, (f64, f64)> = std::collections::BTreeMap::new();
+    for p in points {
+        let (t, s) = slice(p);
+        let entry = slices.entry(t).or_insert((s, s));
+        entry.0 = entry.0.min(s);
+        entry.1 = entry.1.max(s);
+    }
+    let mut widths: Vec<f64> = slices.values().map(|(lo, hi)| hi - lo + 1.0).collect();
+    widths.sort_by(f64::total_cmp);
+    let limit = max_width_ratio * widths[widths.len() / 4];
+    points
+        .iter()
+        .filter(|p| {
+            let (lo, hi) = slices[&slice(p).0];
+            hi - lo + 1.0 <= limit
+        })
+        .copied()
+        .collect()
+}
+
+type Point = (f64, f64);
+
+/// Options of [`ransac_lines`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RansacOptions {
+    /// Points within this distance of a line are its inliers.
+    pub inlier_px: f64,
+    pub iterations: usize,
+    pub min_inliers: usize,
+    /// A later line needs at least this share of the first line's inliers.
+    pub min_share: f64,
+    pub min_elongation: f64,
+    /// Score a line by the length it covers (the number of `bin_px` steps along
+    /// it holding an inlier) instead of by its inlier count, so a long thin
+    /// dart beats a short fat flight.
+    pub by_length: bool,
+    pub bin_px: f64,
+    /// A line within this angle of an earlier one whose centre lies within
+    /// `min_separation_px` of it is the rest of the same dart.
+    pub min_angle_deg: f64,
+    pub min_separation_px: f64,
+    pub seed: u64,
+}
+
+impl Default for RansacOptions {
+    fn default() -> Self {
+        Self {
+            inlier_px: 4.0,
+            iterations: 300,
+            min_inliers: 40,
+            min_share: 0.3,
+            min_elongation: 3.0,
+            by_length: false,
+            bin_px: 2.0,
+            min_angle_deg: 3.0,
+            min_separation_px: 8.0,
+            seed: 0,
+        }
+    }
+}
+
+/// A line found by [`ransac_lines`], refitted to its inliers.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RansacLine {
+    pub centre: (f64, f64),
+    pub direction: (f64, f64),
+    pub inliers: Vec<(f64, f64)>,
+}
+
+/// Deterministic SplitMix64 generator, so results do not depend on a global
+/// random state.
+struct SplitMix(u64);
+
+impl SplitMix {
+    fn below(&mut self, n: usize) -> usize {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        ((z ^ (z >> 31)) % n as u64) as usize
+    }
+}
+
+/// Up to `count` lines through `points` by sequential RANSAC.
+///
+/// The best line is fitted, its inliers removed, and the search repeated on
+/// what is left, so two parallel strips (a new dart beside an old dart's
+/// displaced edge) give two lines instead of one fitted between them. A line
+/// that repeats an earlier one (the other edge of the same dart, a flight
+/// beside its shaft) has its points dropped and the search goes on, so the
+/// lines returned are different darts or strips.
+pub fn ransac_lines(
+    points: &[(f64, f64)],
+    count: usize,
+    options: RansacOptions,
+) -> Vec<RansacLine> {
+    let o = options;
+    let mut rng = SplitMix(o.seed);
+    let mut remaining = points.to_vec();
+    let mut lines: Vec<RansacLine> = Vec::new();
+    let min_cos = o.min_angle_deg.to_radians().cos();
+    let distance = |p: &(f64, f64), c: (f64, f64), d: (f64, f64)| {
+        ((p.0 - c.0) * d.1 - (p.1 - c.1) * d.0).abs()
+    };
+    let mut bins: Vec<i64> = Vec::new();
+    for _ in 0..4 * count {
+        if lines.len() >= count || remaining.len() < o.min_inliers.max(2) {
+            break;
+        }
+        let n = remaining.len();
+        // Point on the line, direction, score.
+        let mut best: Option<(Point, Point, usize)> = None;
+        for _ in 0..o.iterations {
+            let a = remaining[rng.below(n)];
+            let b = remaining[rng.below(n)];
+            let length = (b.0 - a.0).hypot(b.1 - a.1);
+            if length < 5.0 {
+                continue;
+            }
+            let d = ((b.0 - a.0) / length, (b.1 - a.1) / length);
+            let score = if o.by_length {
+                bins.clear();
+                bins.extend(
+                    remaining
+                        .iter()
+                        .filter(|p| distance(p, a, d) <= o.inlier_px)
+                        .map(|p| {
+                            (((p.0 - a.0) * d.0 + (p.1 - a.1) * d.1) / o.bin_px).floor() as i64
+                        }),
+                );
+                bins.sort_unstable();
+                bins.dedup();
+                bins.len()
+            } else {
+                remaining
+                    .iter()
+                    .filter(|p| distance(p, a, d) <= o.inlier_px)
+                    .count()
+            };
+            if best.is_none_or(|(_, _, s)| score > s) {
+                best = Some((a, d, score));
+            }
+        }
+        let Some((a, d, _)) = best else {
+            break;
+        };
+        let inliers_of = |c: (f64, f64), d: (f64, f64)| -> Vec<bool> {
+            remaining
+                .iter()
+                .map(|p| distance(p, c, d) <= o.inlier_px)
+                .collect()
+        };
+        let pick = |keep: &[bool]| -> Vec<(f64, f64)> {
+            remaining
+                .iter()
+                .zip(keep)
+                .filter(|(_, k)| **k)
+                .map(|(p, _)| *p)
+                .collect()
+        };
+        let Some(first) = principal_axis(pick(&inliers_of(a, d))) else {
+            break;
+        };
+        // Refit, then take the inliers of the refitted line.
+        let keep = inliers_of(first.centroid, first.direction);
+        let inliers = pick(&keep);
+        let Some(axis) = principal_axis(inliers.iter().copied()) else {
+            break;
+        };
+        if inliers.len() < o.min_inliers
+            || lines
+                .first()
+                .is_some_and(|l| (inliers.len() as f64) < o.min_share * l.inliers.len() as f64)
+            || axis.spread.0 < o.min_elongation * axis.spread.1.max(0.5)
+        {
+            break;
+        }
+        let duplicate = lines.iter().any(|l| {
+            (axis.direction.0 * l.direction.0 + axis.direction.1 * l.direction.1).abs() >= min_cos
+                && distance(&axis.centroid, l.centre, l.direction) <= o.min_separation_px
+        });
+        remaining = remaining
+            .iter()
+            .zip(&keep)
+            .filter(|(_, k)| !**k)
+            .map(|(p, _)| *p)
+            .collect();
+        if !duplicate {
+            lines.push(RansacLine {
+                centre: axis.centroid,
+                direction: axis.direction,
+                inliers,
+            });
+        }
+    }
+    lines
+}
+
+/// Labels of other groups that continue the chosen one along the dart.
+///
+/// A dart often reaches the fresh mask in pieces: a faint shaft, or a barrel
+/// crossing an old dart, leaves gaps wider than the grouping radius. A piece
+/// joins when it is elongated, within `max_gap` px of the chosen region, and
+/// its own axis passes within `max_offset` px (plus the piece's own half
+/// width, since the nearest pixel may be a corner) of the chosen region's
+/// nearest pixel; once the chosen region is itself elongated, the piece must
+/// also run within `max_angle_deg` of its direction. A piece that is not
+/// elongated (a flight) joins when the chosen region is elongated and that
+/// piece's nearest pixel lies on the chosen region's axis. Pieces join one at
+/// a time, nearest first, so a chain of pieces can follow the dart.
+pub fn join_aligned(
+    groups: &[(u32, Vec<(f64, f64)>)],
+    chosen: &[(f64, f64)],
+    max_gap: f64,
+    max_offset: f64,
+    max_angle_deg: f64,
+) -> Vec<u32> {
+    const MIN_PIXELS: usize = 30;
+    const MIN_ELONGATION: f64 = 2.5;
+    let elongated = |a: &Axis| a.spread.0 >= MIN_ELONGATION * a.spread.1.max(0.5);
+    let offset = |p: (f64, f64), a: &Axis| {
+        ((p.0 - a.centroid.0) * a.direction.1 - (p.1 - a.centroid.1) * a.direction.0).abs()
+    };
+    let min_cos = max_angle_deg.to_radians().cos();
+    let mut candidates: Vec<(u32, &[Point], Option<Axis>)> = groups
+        .iter()
+        .filter(|(_, pts)| pts.len() >= MIN_PIXELS)
+        .map(|(g, pts)| (*g, pts.as_slice(), principal_axis(pts.iter().copied())))
+        .collect();
+    let mut members = chosen.to_vec();
+    let mut joined = Vec::new();
+    while !candidates.is_empty() {
+        let union = principal_axis(members.iter().copied());
+        let mut best: Option<(usize, f64)> = None;
+        for (k, (_, pts, axis)) in candidates.iter().enumerate() {
+            // Nearest pair of pixels between the piece and the chosen region.
+            let mut nearest = (f64::INFINITY, (0.0, 0.0), (0.0, 0.0));
+            for p in pts.iter() {
+                for m in &members {
+                    let d = (p.0 - m.0).hypot(p.1 - m.1);
+                    if d < nearest.0 {
+                        nearest = (d, *m, *p);
+                    }
+                }
+            }
+            let (gap, near_member, near_piece) = nearest;
+            if gap > max_gap {
+                continue;
+            }
+            let ok = match axis {
+                Some(axis) if elongated(axis) => {
+                    offset(near_member, axis) <= max_offset + axis.spread.1
+                        && union.is_none_or(|u| {
+                            !elongated(&u)
+                                || (axis.direction.0 * u.direction.0
+                                    + axis.direction.1 * u.direction.1)
+                                    .abs()
+                                    >= min_cos
+                        })
+                }
+                _ => union.is_some_and(|u| elongated(&u) && offset(near_piece, &u) <= max_offset),
+            };
+            if ok && best.is_none_or(|(_, g)| gap < g) {
+                best = Some((k, gap));
+            }
+        }
+        let Some((k, _)) = best else {
+            break;
+        };
+        let (label, pts, _) = candidates.remove(k);
+        members.extend(pts.iter().copied());
+        joined.push(label);
+    }
+    joined
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -769,5 +1167,95 @@ mod tests {
             .collect();
         let rough = principal_axis(points.iter().copied()).unwrap();
         assert!(shaft_axis(&points, &rough, 2.0, 20).is_none());
+    }
+
+    #[test]
+    fn remove_thin_keeps_a_striped_barrel_and_its_thin_junction() {
+        let (w, h) = (40, 60);
+        let mut mask = vec![false; w * h];
+        let mut fill = |x0: usize, x1: usize, y0: usize, y1: usize| {
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    mask[y * w + x] = true;
+                }
+            }
+        };
+        fill(5, 25, 5, 15); // flight
+        fill(14, 16, 15, 20); // 2 px junction to the shaft
+        for y in (20..40).step_by(3) {
+            fill(11, 19, y, y + 2); // knurled barrel: 2 px stripes, 1 px gaps
+        }
+        fill(2, 38, 50, 51); // 1 px edge of a nudged dart
+        let kept = remove_thin(&mask, w, h, 1, 3);
+        let at = |x: usize, y: usize| kept[y * w + x];
+        assert!((5..25).all(|x| (5..15).all(|y| at(x, y))));
+        assert!((14..16).all(|x| (15..20).all(|y| at(x, y))));
+        let barrel = |m: &[bool]| {
+            (20..40)
+                .flat_map(|y| (0..w).map(move |x| (x, y)))
+                .filter(|&(x, y)| m[y * w + x])
+                .count()
+        };
+        assert_eq!(barrel(&kept), barrel(&mask));
+        assert!((0..w).all(|x| !at(x, 50)));
+        assert!(kept.iter().zip(&mask).all(|(k, m)| !k || *m));
+    }
+
+    #[test]
+    fn ransac_separates_two_parallel_strips() {
+        let mut points = Vec::new();
+        for x in 50..56 {
+            for y in 0..120 {
+                points.push((f64::from(x), f64::from(y))); // the new dart
+            }
+        }
+        for x in 80..83 {
+            for y in 20..110 {
+                points.push((f64::from(x), f64::from(y))); // an old dart's edge
+            }
+        }
+        let lines = ransac_lines(&points, 2, RansacOptions::default());
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].direction.0.abs() < 0.05 && (lines[0].centre.0 - 52.5).abs() < 1.0);
+        assert_eq!(lines[0].inliers.len(), 720);
+        assert!(lines[1].direction.0.abs() < 0.05 && (lines[1].centre.0 - 81.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn ransac_by_length_prefers_a_long_thin_dart_to_a_fat_flight() {
+        let mut points = Vec::new();
+        for x in 0..40 {
+            for y in 0..40 {
+                points.push((f64::from(x), f64::from(y))); // 1600 px, 40 px long
+            }
+        }
+        for x in 100..104 {
+            for y in 0..200 {
+                points.push((f64::from(x), f64::from(y))); // 800 px, 200 px long
+            }
+        }
+        let options = RansacOptions {
+            by_length: true,
+            ..RansacOptions::default()
+        };
+        let lines = ransac_lines(&points, 1, options);
+        assert!(lines[0].direction.0.abs() < 0.05 && (lines[0].centre.0 - 101.5).abs() < 1.0);
+        // The other edge of the same dart is not a second line.
+        let lines = ransac_lines(&points[1600..], 2, options);
+        assert_eq!(lines.len(), 1);
+    }
+
+    #[test]
+    fn narrow_points_leave_out_an_edge_on_flight() {
+        let points = dart_with_flight();
+        let rough = principal_axis(points.iter().copied()).unwrap();
+        let kept = narrow_points(&points, &rough, 2.0);
+        let count = |pts: &[(f64, f64)], flight: bool| {
+            pts.iter().filter(|p| (p.0 >= 150.0) == flight).count()
+        };
+        // Nearly all of the shaft stays and nearly all of the flight goes; a few
+        // corner pixels of the flight fall in narrow slices.
+        assert!(count(&kept, false) * 10 >= count(&points, false) * 9);
+        assert!(count(&kept, true) * 10 <= count(&points, true));
     }
 }
