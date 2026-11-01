@@ -90,6 +90,39 @@ uncompressed PNGs of the full frame, so keep `DIR` outside the repository.
 JSON goes to stdout; errors/diagnostics go to stderr. Exit codes: `0` success,
 `1` operational error, `2` command-line usage error. Ctrl-C/SIGTERM stops the daemon.
 
+## Browser UI
+
+While the daemon runs, open <http://127.0.0.1:5180/> (or the address and port it
+listens on). The pages are built into the binary and talk only to this daemon, so
+they work offline. They show the daemon's own state: changes made in the terminal
+UI or with commands appear in the browser, and the other way round.
+
+- **Live** (`/`): Start/Stop and Reset, the current visit's three darts and total
+  on a board, and a feed of game events. Until a live board has a device for every
+  camera and a calibration for each, it opens setup instead.
+- **Setup** (`/setup/`), four steps:
+  1. **Board:** name, listen address and port (the address applies after a restart).
+  2. **Cameras:** a device, rotation and live preview per camera (one to four), and
+     the resolution, FPS, detection speed and standby time for all of them. Each
+     change is saved at once. Previews need a running board in live mode.
+  3. **Calibrate:** find the 20 on each camera either **On screen**, by clicking
+     the 20 in each preview, or with a **Dart at D20**, like `oche-core orient`.
+     Then fit the wires with the board empty. Each preview shows the fitted wires
+     and the 20 in red. If a camera's red is not the 20, its arrows move it one
+     segment and refit that camera. **Start over** repeats the steps; the saved
+     calibration is kept until a new one succeeds.
+  4. **Test:** throw a few darts and check the scores. In demo mode, buttons and
+     clicks on the board inject throws.
+- **Debug** (`/debug/`): service commands, demo throws, the saved configuration
+  as config keys, and the raw event log.
+
+Rotation turns the preview only; frames, hints and calibration stay in camera
+pixels. Changing a camera's device clears its 20 reference. A resolution with the
+same aspect ratio scales the reference, and any other resolution clears it.
+Removing a camera moves later cameras up one slot, together with their settings
+and 20 reference. The on-screen method and the arrows have been tested on
+synthetic frames only, not yet on real captures.
+
 ## Terminal UI
 
 Two screens: **Board** and **Events**. Board begins with board/detection settings,

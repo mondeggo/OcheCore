@@ -23,6 +23,15 @@ and compatibility claims; it does not gate the native control foundation.
   the same commands and configuration editor as the keyboard. Click targets are
   rebuilt from each rendered layout; modal editors block background clicks and
   disconnected controls cannot submit changes. Image support can be added later.
+- **Browser UI:** plain HTML, CSS and JavaScript in `crates/oche-api/ui`, embedded
+  in the binary with `include_bytes!` and served by the daemon on its API port, so
+  there is no build step, no extra dependency, nothing to install beside the
+  binary, and nothing loaded from the Internet. Pages use only the native API:
+  snapshots from the event stream (plus a two-second status poll for camera FPS and
+  motion, which publish no events), commands and config changes. A
+  Content-Security-Policy limits pages to their own scripts, styles and snapshots.
+  The browser keeps only per-viewer conveniences such as the chosen calibration
+  method.
 - **TOML/UUID/atomic files:** schema version 1, board ID generated once, validated
   atomic replacement with file/directory sync, and a separate lifetime lock file.
   Native UUIDs do not predetermine a future compatibility adapter's representation.

@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f1e7">
+  <meta name="description" content="Watch darts land on your OcheCore board.">
+  <title>Live · OcheCore</title>
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-page="home">
+  <a class="skip-link" href="#main-content">Skip to content</a>
+
+  <header class="site-header">
+    <a class="brand" href="index.html" aria-label="OcheCore live view">
+      <svg class="brand-mark" viewBox="0 0 48 48" aria-hidden="true">
+        <rect width="48" height="48" rx="14" fill="#17261f"/>
+        <circle cx="24" cy="24" r="14" fill="#203b31" stroke="#8bdef4" stroke-width="2"/>
+        <circle cx="24" cy="24" r="8" fill="none" stroke="#91dfb7" stroke-width="2"/>
+        <circle cx="24" cy="24" r="2.6" fill="#ddf56f"/>
+        <path d="M8 17v14M40 17v14" fill="none" stroke="#8bdef4" stroke-width="2.5" stroke-linecap="round"/>
+      </svg>
+      <span class="brand-name">Oche<span>Core</span></span>
+    </a>
+    <p class="home-board-name" id="home-board-name"></p>
+    <nav class="app-nav" aria-label="Sections">
+      <a href="index.html" aria-current="page">Live</a>
+      <a href="setup/index.html">Setup</a>
+      <a href="debug/index.html">Debug</a>
+    </nav>
+    <a class="help-link" href="https://github.com/mondeggo/OcheCore" target="_blank" rel="noreferrer" aria-label="Open the OcheCore documentation">?</a>
+  </header>
+
+  <main class="page-shell" id="main-content">
+    <div class="page-body home-layout">
+      <section class="home-play" aria-label="Current visit">
+        <div class="detection-strip" aria-live="polite">
+          <button class="btn btn-lime" type="button" data-command="start" data-when-stopped hidden>Start</button>
+          <button class="btn" type="button" data-command="stop" data-when-running hidden>Stop</button>
+          <span class="board-state" id="board-state" data-tone="busy">Connecting</span>
+          <div class="dart-slots" id="dart-slots"></div>
+          <span class="visit-total">Total <strong id="visit-total">0</strong></span>
+          <button class="btn" type="button" data-command="reset">Reset</button>
+        </div>
+        <div class="board-stage">
+          <svg id="throw-board" class="is-display" viewBox="-235 -235 470 470" role="img" aria-label="Dartboard with the darts of the current visit"></svg>
+        </div>
+      </section>
+
+      <section class="panel event-panel" aria-labelledby="events-title">
+        <h2 id="events-title">Game events</h2>
+        <ol class="event-feed" id="event-feed" aria-live="polite"></ol>
+        <p class="event-empty" id="event-empty">Waiting for the first dart. In demo mode, throw demo darts from <a href="debug/index.html">Debug</a>.</p>
+      </section>
+    </div>
+  </main>
+
+  <footer class="status-bar" aria-label="Board status">
+    <span class="status-state" id="status-state" data-tone="ready">Ready</span>
+    <span class="status-item" id="status-cameras"></span>
+    <span class="status-item" id="status-address"></span>
+    <span class="status-item status-preview" id="status-connection">Connecting…</span>
+  </footer>
+
+  <script src="assets/app.js" defer></script>
+</body>
+</html>

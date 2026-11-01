@@ -15,6 +15,10 @@ expose it only on a trusted network or behind appropriate access controls.
 | GET | `/api/v1/events` | SSE stream with initial snapshot and subsequent events |
 | GET | `/api/v1/events/recent` | Up to 64 events, oldest first |
 
+Other `GET` paths serve the browser UI embedded in the binary (`/` and the
+`/setup/` and `/debug/` pages, see [Using OcheCore](usage.md#browser-ui)). It uses
+only the routes above; unknown paths return the same 404 JSON error.
+
 Commands use JSON, for example `{"command":"start"}`. Available commands:
 `start`, `stop`, `reset`, `wake`, `demo_throw` with string `label`, and
 `demo_takeout` with integer `remaining`, `calibrate` with optional `camera`, `orient_begin`, and `orient_finish`.

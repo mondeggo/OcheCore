@@ -46,8 +46,9 @@ and player management belong to consuming applications.
 
 ## Development and verification
 
-The control workspace, CLI, and TUI are implemented. Capture, calibration, vision,
-and Autodarts compatibility remain deferred. Keep the pinned toolchain and
+The control workspace, CLI, TUI, and the browser UI embedded in `oche-api` are
+implemented. Capture, calibration, vision, and Autodarts compatibility remain
+deferred. Keep the pinned toolchain and
 `Cargo.lock` current, and document native build prerequisites. Hardware recordings
 are not required for work on native controls or terminal interfaces.
 

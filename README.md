@@ -70,7 +70,9 @@ Options, building from source, and Docker Compose are in
 ### First run
 
 1. Start the service with `oche-core run` (the installer's boot service already
-   does this), then open the terminal UI with `oche-core remote`.
+   does this), then open the terminal UI with `oche-core remote`, or the browser
+   UI at <http://127.0.0.1:5180/>, which walks through the same steps
+   ([Browser UI](docs/usage.md#browser-ui)).
 2. Choose each camera (its name and USB port are shown) and press **Start**. The
    same can be done from the command line with `oche-core cameras available`,
    `oche-core config set cameras.1.device …` and `oche-core start`; see
@@ -91,7 +93,7 @@ Options, building from source, and Docker Compose are in
 | Topic | Page |
 | --- | --- |
 | Install, build from source, Docker | [Installation](docs/installation.md) |
-| Commands, terminal UI, demo mode | [Using OcheCore](docs/usage.md) |
+| Commands, terminal and browser UI, demo mode | [Using OcheCore](docs/usage.md) |
 | LAN access and security | [Networking and security](docs/networking.md) |
 | Native HTTP API and events | [Native API](docs/native-api.md) |
 | Design decisions and boundaries | [Architecture](docs/architecture.md) |

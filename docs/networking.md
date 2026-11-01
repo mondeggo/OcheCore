@@ -18,7 +18,11 @@ restart it. For a temporary override, use `oche-core --port 5180 run` and pass
 their saved configuration; their `server.port` must match the container's 5180
 port mapping.
 
-The native API is plain HTTP without authentication: anyone who can reach it can
-control the board. Use loopback, a trusted/private LAN, or an SSH tunnel. No hosted
+The browser UI is served on the same address and port as the API, so it is
+reachable exactly where the API is: on loopback by default, or across the network
+with `--bind 0.0.0.0`.
+
+The native API and the browser UI are plain HTTP without authentication: anyone
+who can reach them can control the board. Use loopback, a trusted/private LAN, or an SSH tunnel. No hosted
 service is needed. The [native API](native-api.md) is separate from future
 Autodarts adapters.

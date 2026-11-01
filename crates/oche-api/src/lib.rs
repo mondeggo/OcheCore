@@ -1,9 +1,11 @@
-//! Versioned native HTTP API. No Autodarts routes are emulated here.
+//! Versioned native HTTP API and the browser UI that uses it. No Autodarts
+//! routes are emulated here.
 mod cameras;
+mod ui;
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, State, rejection::JsonRejection},
-    http::StatusCode,
+    http::{Method, StatusCode, Uri},
     response::{
         IntoResponse, Response, Sse,
         sse::{Event, KeepAlive},
@@ -106,14 +108,25 @@ pub fn router(service: Service) -> Router {
         .route("/api/v1/command", post(command))
         .route("/api/v1/events", get(events))
         .route("/api/v1/events/recent", get(history))
-        .fallback(|| async {
-            (
-                StatusCode::NOT_FOUND,
-                Json(error("not_found", "unknown native API route")),
-            )
-        })
+        .fallback(fallback)
         .layer(DefaultBodyLimit::max(16 * 1024))
         .with_state(service)
+}
+
+/// Paths outside the API serve the browser UI.
+async fn fallback(method: Method, uri: Uri) -> Response {
+    let path = uri.path();
+    if (method == Method::GET || method == Method::HEAD)
+        && !path.starts_with("/api/")
+        && let Some(page) = ui::response(path)
+    {
+        return page;
+    }
+    (
+        StatusCode::NOT_FOUND,
+        Json(error("not_found", "unknown native API route")),
+    )
+        .into_response()
 }
 
 async fn status(State(service): State<Service>) -> Result<Json<Snapshot>, Failure> {
@@ -407,6 +420,66 @@ mod tests {
         let reconnect = client.get(format!("{url}/events")).send().await.unwrap();
         let chunk = reconnect.bytes_stream().next().await.unwrap().unwrap();
         assert!(String::from_utf8_lossy(&chunk).contains("\"sequence\":3"));
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn the_browser_ui_is_served_beside_the_api() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::acquire(&dir.path().join("board.toml")).unwrap();
+        let config = store.initialize().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let service = Service::new(Engine::new(config, store, Mode::Demo, address.to_string()));
+        let task = tokio::spawn(serve(listener, service, std::future::pending()));
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        let get = |path: &str| client.get(format!("http://{address}{path}")).send();
+        for (path, content_type, marker) in [
+            ("/", "text/html", "data-page=\"home\""),
+            ("/setup/", "text/html", "data-page=\"board\""),
+            (
+                "/setup/calibrate.html",
+                "text/html",
+                "data-page=\"calibrate\"",
+            ),
+            ("/debug/", "text/html", "data-page=\"debug\""),
+            ("/assets/app.js", "text/javascript", "/api/v1"),
+            ("/assets/style.css", "text/css", ":root"),
+        ] {
+            let response = get(path).await.unwrap();
+            assert_eq!(response.status(), 200, "{path}");
+            let headers = response.headers();
+            assert!(
+                headers["content-type"]
+                    .to_str()
+                    .unwrap()
+                    .starts_with(content_type)
+            );
+            assert!(headers.contains_key("content-security-policy"));
+            assert!(response.text().await.unwrap().contains(marker), "{path}");
+        }
+        let response = get("/setup").await.unwrap();
+        assert_eq!(response.status(), 308);
+        assert_eq!(response.headers()["location"], "/setup/");
+        for path in [
+            "/missing.html",
+            "/api/v1/missing",
+            "/api/v1/",
+            "/../Cargo.toml",
+        ] {
+            let response = get(path).await.unwrap();
+            assert_eq!(response.status(), 404, "{path}");
+            assert_eq!(response.json::<ApiError>().await.unwrap().code, "not_found");
+        }
+        let response = client
+            .post(format!("http://{address}/"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 404);
         task.abort();
     }
 }

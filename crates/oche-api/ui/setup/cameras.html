@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f1e7">
+  <meta name="description" content="Choose and preview OcheCore cameras.">
+  <title>Cameras · OcheCore</title>
+  <link rel="icon" href="../assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body data-page="cameras">
+  <a class="skip-link" href="#main-content">Skip to content</a>
+
+  <header class="site-header">
+    <a class="brand" href="../index.html" aria-label="OcheCore live view">
+      <svg class="brand-mark" viewBox="0 0 48 48" aria-hidden="true">
+        <rect width="48" height="48" rx="14" fill="#17261f"/>
+        <circle cx="24" cy="24" r="14" fill="#203b31" stroke="#8bdef4" stroke-width="2"/>
+        <circle cx="24" cy="24" r="8" fill="none" stroke="#91dfb7" stroke-width="2"/>
+        <circle cx="24" cy="24" r="2.6" fill="#ddf56f"/>
+        <path d="M8 17v14M40 17v14" fill="none" stroke="#8bdef4" stroke-width="2.5" stroke-linecap="round"/>
+      </svg>
+      <span class="brand-name">Oche<span>Core</span></span>
+    </a>
+    <nav class="setup-nav" aria-label="Setup steps">
+      <a class="setup-step" href="index.html" data-setup-step="1"><span class="step-number">01</span><strong>Board</strong></a>
+      <a class="setup-step" href="cameras.html" data-setup-step="2"><span class="step-number">02</span><strong>Cameras</strong></a>
+      <a class="setup-step" href="calibrate.html" data-setup-step="3"><span class="step-number">03</span><strong>Calibrate</strong></a>
+      <a class="setup-step" href="test.html" data-setup-step="4"><span class="step-number">04</span><strong>Test</strong></a>
+    </nav>
+    <nav class="app-nav" aria-label="Sections">
+      <a href="../index.html">Live</a>
+      <a href="../setup/index.html" aria-current="page">Setup</a>
+      <a href="../debug/index.html">Debug</a>
+    </nav>
+    <a class="help-link" href="https://github.com/mondeggo/OcheCore" target="_blank" rel="noreferrer" aria-label="Open the OcheCore documentation">?</a>
+  </header>
+
+  <main class="page-shell" id="main-content">
+    <div class="page-head">
+      <h1>Set up your <span class="hero-highlight">cameras.</span></h1>
+      <p class="lede">Pick a device for each camera and make sure the whole board, outer double included, is in frame.</p>
+    </div>
+
+    <div class="page-body cameras-body">
+      <div class="camera-grid" id="camera-grid" aria-live="polite"></div>
+
+      <div class="panel detection-settings" id="detection-settings" role="group" aria-label="Settings for every camera">
+        <div class="field">
+          <label for="camera-resolution">Resolution</label>
+          <select id="camera-resolution"></select>
+        </div>
+        <div class="field">
+          <label for="camera-fps">Frame rate</label>
+          <select id="camera-fps"></select>
+        </div>
+        <div class="field">
+          <label for="detection-speed">Detection speed</label>
+          <select id="detection-speed"></select>
+        </div>
+        <div class="field">
+          <label for="detection-standby">Standby after</label>
+          <select id="detection-standby"></select>
+        </div>
+      </div>
+    </div>
+
+    <nav class="footer-nav" aria-label="Page navigation">
+      <a class="btn btn-ghost" href="index.html">Back</a>
+      <a class="btn btn-lime" href="calibrate.html" data-save-next>Next <span aria-hidden="true">→</span></a>
+    </nav>
+  </main>
+
+  <footer class="status-bar" aria-label="Board status">
+    <span class="status-state" id="status-state" data-tone="setup">Needs setup</span>
+    <span class="status-item" id="status-cameras"></span>
+    <span class="status-item" id="status-address"></span>
+    <span class="status-item status-preview" id="status-connection">Connecting…</span>
+  </footer>
+
+  <script src="../assets/app.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f1e7">
+  <meta name="description" content="Debug tools for the OcheCore board: service controls, demo throws and the raw event log.">
+  <title>Debug · OcheCore</title>
+  <link rel="icon" href="../assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body data-page="debug">
+  <a class="skip-link" href="#main-content">Skip to content</a>
+
+  <header class="site-header">
+    <a class="brand" href="../index.html" aria-label="OcheCore live view">
+      <svg class="brand-mark" viewBox="0 0 48 48" aria-hidden="true">
+        <rect width="48" height="48" rx="14" fill="#17261f"/>
+        <circle cx="24" cy="24" r="14" fill="#203b31" stroke="#8bdef4" stroke-width="2"/>
+        <circle cx="24" cy="24" r="8" fill="none" stroke="#91dfb7" stroke-width="2"/>
+        <circle cx="24" cy="24" r="2.6" fill="#ddf56f"/>
+        <path d="M8 17v14M40 17v14" fill="none" stroke="#8bdef4" stroke-width="2.5" stroke-linecap="round"/>
+      </svg>
+      <span class="brand-name">Oche<span>Core</span></span>
+    </a>
+    <nav class="app-nav" aria-label="Sections">
+      <a href="../index.html">Live</a>
+      <a href="../setup/index.html">Setup</a>
+      <a href="../debug/index.html" aria-current="page">Debug</a>
+    </nav>
+    <a class="help-link" href="https://github.com/mondeggo/OcheCore" target="_blank" rel="noreferrer" aria-label="Open the OcheCore documentation">?</a>
+  </header>
+
+  <main class="page-shell" id="main-content">
+    <div class="page-body debug-layout">
+      <div class="debug-column">
+        <section class="panel" aria-labelledby="service-title">
+          <div class="panel-header">
+            <h2 id="service-title">Service</h2>
+            <span class="board-state board-state-small" id="board-state" data-tone="ready">Throw</span>
+          </div>
+          <div class="control-buttons">
+            <button class="btn btn-small" type="button" data-command="start">Start</button>
+            <button class="btn btn-small" type="button" data-command="stop">Stop</button>
+            <button class="btn btn-small" type="button" data-command="reset">Reset visit</button>
+            <button class="btn btn-small" type="button" data-command="demo_takeout" data-args='{"remaining":0}' data-demo-only hidden>Take out darts</button>
+            <button class="btn btn-small btn-primary" type="button" data-command="calibrate">Calibrate</button>
+          </div>
+        </section>
+
+        <section class="panel debug-config" aria-labelledby="config-title">
+          <div class="panel-header">
+            <h2 id="config-title">Configuration</h2>
+            <button class="btn btn-small btn-ghost" type="button" id="copy-config">Copy JSON</button>
+          </div>
+          <p class="hint">The daemon's saved settings, as <code>PUT /api/v1/config</code> keys.</p>
+          <ol class="debug-list" id="config-list"></ol>
+        </section>
+      </div>
+
+      <section class="panel debug-throws" aria-labelledby="throws-title">
+        <div class="panel-header">
+          <h2 id="throws-title">Visit</h2>
+          <span class="visit-total">Total <strong id="visit-total">0</strong></span>
+        </div>
+        <div class="dart-slots" id="dart-slots"></div>
+        <div class="board-stage">
+          <svg id="throw-board" viewBox="-235 -235 470 470" role="img" aria-label="Dartboard with the darts of the current visit; in demo mode, click to throw"></svg>
+        </div>
+        <div class="quick-throws" role="group" aria-label="Quick demo throws" data-demo-only hidden>
+          <button class="throw-btn" type="button" data-throw="T20">T20</button>
+          <button class="throw-btn" type="button" data-throw="T19">T19</button>
+          <button class="throw-btn" type="button" data-throw="D20">D20</button>
+          <button class="throw-btn" type="button" data-throw="SB">SB</button>
+          <button class="throw-btn" type="button" data-throw="DB">DB</button>
+          <button class="throw-btn" type="button" data-throw="MISS">Miss</button>
+        </div>
+      </section>
+
+      <section class="panel debug-events" aria-labelledby="log-title">
+        <div class="panel-header">
+          <h2 id="log-title">Event log</h2>
+          <button class="btn btn-small btn-ghost" type="button" id="clear-events">Clear</button>
+        </div>
+        <ol class="debug-list debug-log" id="event-log"></ol>
+      </section>
+    </div>
+  </main>
+
+  <footer class="status-bar" aria-label="Board status">
+    <span class="status-state" id="status-state" data-tone="ready">Ready</span>
+    <span class="status-item" id="status-cameras"></span>
+    <span class="status-item" id="status-address"></span>
+    <span class="status-item status-preview" id="status-connection">Connecting…</span>
+  </footer>
+
+  <script src="../assets/app.js" defer></script>
+  <script src="debug.js" defer></script>
+</body>
+</html>
