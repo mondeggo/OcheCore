@@ -8,6 +8,10 @@ pub mod board;
 pub const CONFIG_VERSION: u32 = 1;
 pub const DEFAULT_PORT: u16 = 5180;
 pub const HISTORY_LIMIT: usize = 64;
+/// Cameras needed to score: one camera sees a dart only as a line along its
+/// shaft, so an impact needs lines from at least two. Configurations may hold
+/// fewer (demo and control-only boards need none); setup asks for this many.
+pub const MIN_SCORING_CAMERAS: usize = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -136,7 +140,9 @@ impl Default for Config {
                 speed: Speed::Default,
                 standby_seconds: 900,
             },
-            cameras: vec![CameraConfig::new(1)],
+            cameras: (1..=MIN_SCORING_CAMERAS as u8)
+                .map(CameraConfig::new)
+                .collect(),
         }
     }
 }
@@ -457,6 +463,10 @@ pub struct Snapshot {
     pub capabilities: Capabilities,
     pub listening_on: String,
     pub restart_required: bool,
+    /// The listen address is set outside OcheCore, by a container's port
+    /// mapping, so `server.bind` and `server.port` are read only.
+    #[serde(default)]
+    pub listener_fixed: bool,
     #[serde(default)]
     pub cameras: Vec<CameraStatus>,
     #[serde(default)]
@@ -769,6 +779,7 @@ mod tests {
             },
             listening_on: String::new(),
             restart_required: false,
+            listener_fixed: false,
             cameras: (1..=2)
                 .map(|slot| CameraStatus {
                     slot,

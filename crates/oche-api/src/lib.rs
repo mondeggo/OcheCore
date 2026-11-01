@@ -446,6 +446,7 @@ mod tests {
                 "data-page=\"calibrate\"",
             ),
             ("/debug/", "text/html", "data-page=\"debug\""),
+            ("/settings/", "text/html", "data-page=\"settings\""),
             ("/assets/app.js", "text/javascript", "/api/v1"),
             ("/assets/style.css", "text/css", ":root"),
         ] {

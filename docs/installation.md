@@ -98,7 +98,10 @@ The image's default command is `run --init-bind 0.0.0.0`: the initial address
 allows container networking and is only used when creating configuration.
 Subsequent starts honor the saved address. Explicit `--bind` / `--port` remain
 runtime overrides. Keep container port 5180 unless you also update the mapping
-and healthcheck; `OCHECORE_PORT` changes only the published host port.
+and healthcheck; `OCHECORE_PORT` changes only the published host port. The image
+sets `OCHECORE_CONTAINER=1`, so the daemon refuses `server.bind` and
+`server.port` changes from the browser UI, terminal UI and `config set`: change
+`OCHECORE_BIND` or `OCHECORE_PORT` and recreate the container instead.
 Set `OCHECORE_DATA_DIR` to use another existing folder. The UID/GID variables above
 run the container as your host user so it can write to that folder; keep them set
 when running Compose, or save their numeric values in `.env`. Without overrides,

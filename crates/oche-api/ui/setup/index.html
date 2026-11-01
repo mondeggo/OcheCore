@@ -29,11 +29,7 @@
       <a class="setup-step" href="calibrate.html" data-setup-step="3"><span class="step-number">03</span><strong>Calibrate</strong></a>
       <a class="setup-step" href="test.html" data-setup-step="4"><span class="step-number">04</span><strong>Test</strong></a>
     </nav>
-    <nav class="app-nav" aria-label="Sections">
-      <a href="../index.html">Live</a>
-      <a href="../setup/index.html" aria-current="page">Setup</a>
-      <a href="../debug/index.html">Debug</a>
-    </nav>
+    <a class="btn btn-small btn-ghost setup-exit" href="../settings/index.html" data-exit-setup hidden>Exit setup</a>
     <a class="help-link" href="https://github.com/mondeggo/OcheCore" target="_blank" rel="noreferrer" aria-label="Open the OcheCore documentation">?</a>
   </header>
 
@@ -59,7 +55,7 @@
             <input id="host-port" name="host-port" type="text" inputmode="numeric" placeholder="5180" autocomplete="off" maxlength="5">
           </div>
         </div>
-        <p class="hint">127.0.0.1 keeps it on this computer; 0.0.0.0 serves it on every network. A new address applies after OcheCore restarts.</p>
+        <p class="hint" id="listen-note">127.0.0.1 keeps it on this computer; 0.0.0.0 serves it on every network. A new address applies after OcheCore restarts.</p>
       </form>
     </div>
 

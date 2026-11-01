@@ -6,8 +6,8 @@ use crossterm::event::{
 };
 use futures_util::StreamExt;
 use oche_domain::{
-    ActivityLevel, CameraDevice, CameraInventory, CameraState, Command, ConfigChange, Mode,
-    NativeEvent, ServiceState, Snapshot, Speed,
+    ActivityLevel, CameraDevice, CameraInventory, CameraState, Command, ConfigChange,
+    MIN_SCORING_CAMERAS, Mode, NativeEvent, ServiceState, Snapshot, Speed,
 };
 use ratatui::{
     Frame,
@@ -530,20 +530,22 @@ fn handle_key(ui: &mut Ui, view: &View, key: KeyEvent, tx: &mpsc::Sender<Request
         }
         KeyCode::Char('+') | KeyCode::Char('-') if ui.tab == 0 => {
             let count = snapshot.config.cameras.len();
+            // A board with fewer cameras than scoring needs goes straight to that many.
             let next = if key.code == KeyCode::Char('+') {
-                (count + 1).min(4)
+                (count + 1).clamp(MIN_SCORING_CAMERAS, 4)
             } else {
-                count.saturating_sub(1).max(1)
+                count.saturating_sub(1).max(MIN_SCORING_CAMERAS)
             };
             if next == count {
-                ui.notice = "Choose between one and four cameras".into();
+                ui.notice =
+                    "Choose between two and four cameras; scoring needs at least two".into();
                 return;
             }
             // Review the new count before saving; decreasing removes the highest slot.
             ui.editor = Some(Editor {
                 key: "cameras.count".into(),
                 value: next.to_string(),
-                choices: vec!["1".into(), "2".into(), "3".into(), "4".into()],
+                choices: (MIN_SCORING_CAMERAS..=4).map(|n| n.to_string()).collect(),
                 revision: snapshot.revision,
                 correction: None,
             });
@@ -945,6 +947,7 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, _endpoint: &str) -> Vec<H
     let mut lines: Vec<Line<'static>> = Vec::new();
     let mut row_hits: Vec<(usize, MouseAction)> = Vec::new();
     let mut camera_rows = Vec::new();
+    let mut detection_rows = Vec::new();
     let mut selected_row = 0;
     let mut camera_heading = None;
     let mut darts_row = None;
@@ -1073,7 +1076,14 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, _endpoint: &str) -> Vec<H
         lines.push(Line::raw(""));
         camera_heading = Some(lines.len());
         lines.push(Line::styled("CAMERAS", selection(true)));
-        lines.push(Line::raw(""));
+        if s.config.cameras.len() < MIN_SCORING_CAMERAS {
+            lines.push(Line::styled(
+                "  Scoring needs at least two cameras: press + to add one",
+                Style::default().fg(Color::Yellow),
+            ));
+        } else {
+            lines.push(Line::raw(""));
+        }
         for (index, _) in s.config.cameras.iter().enumerate() {
             if ui.selected == CAMERA_START + index {
                 selected_row = lines.len();
@@ -1096,12 +1106,12 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, _endpoint: &str) -> Vec<H
                 selected_row = lines.len();
             }
             row_hits.push((lines.len(), MouseAction::Detection(index)));
+            detection_rows.push((lines.len(), index, plain(&config_value(s, key))));
             lines.push(Line::styled(
                 format!(
-                    "{} {:27} {} v",
+                    "{} {}",
                     if selected { "›" } else { " " },
-                    DETECTION_LABELS[index],
-                    plain(&config_value(s, key))
+                    DETECTION_LABELS[index]
                 ),
                 selection(selected),
             ));
@@ -1147,14 +1157,18 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, _endpoint: &str) -> Vec<H
         }
     }
     if let Some(y) = camera_heading.and_then(visible_y) {
-        for (offset, label, key) in [(10, "+ Add", '+'), (19, "- Remove last", '-')] {
+        let count = view.snapshot.as_ref().map_or(0, |s| s.config.cameras.len());
+        for (offset, label, key, enabled) in [
+            (10, "+ Add", '+', count < 4),
+            (19, "- Remove last", '-', count > MIN_SCORING_CAMERAS),
+        ] {
             button(
                 frame,
                 &mut hits,
                 Rect::new(content.x + offset, y, label.len() as u16 + 2, 1),
                 label,
                 MouseAction::Key(KeyCode::Char(key)),
-                connected,
+                connected && enabled,
                 false,
             );
         }
@@ -1219,6 +1233,23 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, _endpoint: &str) -> Vec<H
             );
         }
     }
+    // Detection values are dropdowns, drawn like the camera device boxes.
+    for (row, index, value) in detection_rows {
+        if let Some(y) = visible_y(row) {
+            let width = (value.chars().count() as u16 + 4)
+                .max(14)
+                .min(content.width.saturating_sub(DROPDOWN_COLUMN));
+            button(
+                frame,
+                &mut hits,
+                Rect::new(content.x + DROPDOWN_COLUMN, y, width, 1),
+                &format!("{value} {DROPDOWN}"),
+                MouseAction::Detection(index),
+                connected,
+                ui.selected == detection_start(view.snapshot.as_ref().unwrap()) + index,
+            );
+        }
+    }
     for (row, index) in camera_rows {
         let snapshot = view.snapshot.as_ref().unwrap();
         let c = &snapshot.config.cameras[index];
@@ -1247,7 +1278,7 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, _endpoint: &str) -> Vec<H
                 frame,
                 &mut hits,
                 Rect::new(content.x + 10, y, device_width, 1),
-                &format!("{} v", plain(&label)),
+                &format!("{} {DROPDOWN}", plain(&label)),
                 MouseAction::CameraField(index, 0),
                 connected,
                 ui.selected == CAMERA_START + index && ui.camera_field == 0,
@@ -1408,6 +1439,11 @@ fn button(
         hits.push(Hit { area, action });
     }
 }
+
+/// Marks a value that opens a list of choices.
+const DROPDOWN: char = '▼';
+/// Where dropdown values start, after the marker and a 27-column label.
+const DROPDOWN_COLUMN: u16 = 30;
 
 fn selection(selected: bool) -> Style {
     if selected {
@@ -1644,16 +1680,32 @@ mod tests {
 
     #[test]
     fn camera_count_changes_require_save_and_respect_limits() {
-        let mut view = view(1);
+        let mut view = view(2);
         let mut ui = Ui::default();
         let (tx, mut rx) = mpsc::channel(8);
         click(&mut ui, &view, MouseAction::Key(KeyCode::Char('+')), &tx);
-        assert_eq!(ui.editor.as_ref().unwrap().value, "2");
+        assert_eq!(ui.editor.as_ref().unwrap().value, "3");
+        assert_eq!(ui.editor.as_ref().unwrap().choices, ["2", "3", "4"]);
         assert!(rx.try_recv().is_err());
         key(&mut ui, &view, KeyCode::Esc, &tx);
         assert!(rx.try_recv().is_err());
+        // Scoring needs two cameras: there is no going below that.
         key(&mut ui, &view, KeyCode::Char('-'), &tx);
         assert!(ui.editor.is_none());
+        assert!(ui.notice.contains("at least two"));
+        // A one-camera board is offered two.
+        let one = super::tests::view(1);
+        let (text_hits, text) = draw(&mut Ui::default(), &one, 110, 50);
+        assert!(text.contains("Scoring needs at least two cameras"));
+        assert!(
+            !text_hits
+                .iter()
+                .any(|hit| matches!(hit.action, MouseAction::Key(KeyCode::Char('-')))),
+            "Remove last is disabled at the minimum"
+        );
+        key(&mut ui, &one, KeyCode::Char('+'), &tx);
+        assert_eq!(ui.editor.as_ref().unwrap().value, "2");
+        key(&mut ui, &view, KeyCode::Esc, &tx);
         view.snapshot.as_mut().unwrap().config.cameras =
             (1..=4).map(oche_domain::CameraConfig::new).collect();
         key(&mut ui, &view, KeyCode::Char('+'), &tx);
@@ -1738,8 +1790,8 @@ mod tests {
             !text.contains("Cameras  "),
             "the camera count is set with + and -"
         );
-        assert!(text.contains("default v"), "dropdown rows are marked");
-        assert!(text.contains("1280x720 v") && text.contains("30 v"));
+        assert!(text.contains("default ▼"), "dropdown rows are marked");
+        assert!(text.contains("1280x720 ▼") && text.contains("30 ▼"));
     }
 
     #[test]

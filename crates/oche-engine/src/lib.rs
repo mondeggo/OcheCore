@@ -25,6 +25,7 @@ pub struct Engine {
     sequence: u64,
     listening_on: String,
     startup_server: ServerConfig,
+    listener_fixed: bool,
     events: broadcast::Sender<NativeEvent>,
     history: VecDeque<NativeEvent>,
     calibration: Option<CalibrationRecord>,
@@ -78,12 +79,19 @@ impl Engine {
             revision: 0,
             sequence: 0,
             listening_on,
+            listener_fixed: false,
             events,
             history: VecDeque::new(),
             calibration,
             cameras: Vec::new(),
             motion: false,
         }
+    }
+
+    /// Makes `server.bind` and `server.port` read only: something outside
+    /// OcheCore, such as a container's port mapping, decides where it listens.
+    pub fn fix_listener(&mut self) {
+        self.listener_fixed = true;
     }
 
     pub fn mode(&self) -> Mode {
@@ -130,12 +138,13 @@ impl Engine {
                 capture: self.mode == Mode::Live,
                 calibration: self.calibrated_cameras() > 0,
                 // Fusing shaft lines needs at least two calibrated views.
-                vision: self.mode == Mode::Live && self.calibrated_cameras() >= 2,
+                vision: self.mode == Mode::Live && self.calibrated_cameras() >= MIN_SCORING_CAMERAS,
                 autodarts_compatibility: false,
                 synthetic_input: self.mode == Mode::Demo,
             },
             listening_on: self.listening_on.clone(),
             restart_required: self.config.server != self.startup_server,
+            listener_fixed: self.listener_fixed,
             cameras: self.cameras.clone(),
             calibration: self.calibration.clone(),
             motion: self.motion,
@@ -311,6 +320,12 @@ impl Engine {
                 "state changed while editing; refresh and try again",
             ));
         }
+        if self.listener_fixed && change.key.starts_with("server.") {
+            return Err(error(
+                "invalid_request",
+                "the listen address is set by the container's port mapping (OCHECORE_BIND and OCHECORE_PORT); server.bind and server.port cannot be changed here",
+            ));
+        }
         let candidate = self
             .config
             .changed(&change)
@@ -437,6 +452,36 @@ mod tests {
         let config = store.initialize().unwrap();
         let engine = Engine::new(config, store, mode, "127.0.0.1:5180".into());
         (dir, engine)
+    }
+
+    #[test]
+    fn a_fixed_listener_refuses_address_changes_but_not_others() {
+        let (_dir, mut e) = engine(Mode::Demo);
+        assert!(!e.snapshot().listener_fixed);
+        e.fix_listener();
+        assert!(e.snapshot().listener_fixed);
+        for (key, value) in [("server.port", "5181"), ("server.bind", "127.0.0.1")] {
+            let refused = e
+                .configure(ConfigChange {
+                    key: key.into(),
+                    value: value.into(),
+                    expected_revision: None,
+                })
+                .unwrap_err();
+            assert_eq!(refused.code, "invalid_request");
+            assert!(refused.message.contains("port mapping"));
+        }
+        let before = e.snapshot();
+        assert!(!before.restart_required);
+        let renamed = e
+            .configure(ConfigChange {
+                key: "board.name".into(),
+                value: "Club board".into(),
+                expected_revision: None,
+            })
+            .unwrap();
+        assert_eq!(renamed.config.board.name, "Club board");
+        assert_eq!(renamed.config.server, before.config.server);
     }
 
     #[test]

@@ -29,6 +29,7 @@ const ASSETS: &[Asset] = assets![
     "setup/cameras.html" => HTML,
     "setup/calibrate.html" => HTML,
     "setup/test.html" => HTML,
+    "settings/index.html" => HTML,
     "debug/index.html" => HTML,
     "debug/debug.js" => "text/javascript; charset=utf-8",
     "assets/app.js" => "text/javascript; charset=utf-8",

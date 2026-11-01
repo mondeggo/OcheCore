@@ -20,7 +20,8 @@ port mapping.
 
 The browser UI is served on the same address and port as the API, so it is
 reachable exactly where the API is: on loopback by default, or across the network
-with `--bind 0.0.0.0`.
+with `--bind 0.0.0.0`. In Docker, the port mapping (`OCHECORE_BIND`,
+`OCHECORE_PORT`) decides this instead, and the saved address is read only.
 
 The native API and the browser UI are plain HTTP without authentication: anyone
 who can reach them can control the board. Use loopback, a trusted/private LAN, or an SSH tunnel. No hosted

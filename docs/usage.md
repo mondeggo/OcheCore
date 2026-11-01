@@ -41,8 +41,10 @@ oche-core calibrate --all             # empty board; asks for the dart the first
 ```
 
 `config set` validates and atomically saves through the daemon; board ID is read
-only. `init`, `config reset`, and `config validate` are local file operations. Camera count is 1–4;
-decreasing it removes the highest slots. Assigned device paths must be unique.
+only. `init`, `config reset`, and `config validate` are local file operations.
+Camera count is 1–4 in the configuration, but scoring needs at least two cameras,
+so setup in the terminal and browser asks for two to four; decreasing it removes
+the highest slots. Assigned device paths must be unique.
 
 To start fresh, stop the daemon with Ctrl+C (or stop its container), run
 `oche-core config reset`, then `oche-core run`. Reset replaces all configuration
@@ -97,20 +99,36 @@ listens on). The pages are built into the binary and talk only to this daemon, s
 they work offline. They show the daemon's own state: changes made in the terminal
 UI or with commands appear in the browser, and the other way round.
 
+The top bar links **Live**, **Settings** and **Debug**. Setup is not in it: it
+opens by itself on the first run, and later from **Run setup again** in Settings.
+While setup runs, only its steps are shown; once the board is set up, **Exit
+setup** leads back to Settings.
+
 - **Live** (`/`): Start/Stop and Reset, the current visit's three darts and total
   on a board, and a feed of game events. Until a live board has a device for every
   camera and a calibration for each, it opens setup instead.
+- **Settings** (`/settings/`): the terminal UI's settings. **Board** (its name)
+  and **Network** (listen address and port), each saved with **Save**; each
+  camera's device, state and calibration; and the detection speed, standby time,
+  resolution and frame rate, each saved when chosen. **Change** and **Calibrate**
+  open those setup steps. A saved address waits for a restart, and Network says so
+  until then. In Docker the address is greyed out: the port mapping decides it.
 - **Setup** (`/setup/`), four steps:
   1. **Board:** name, listen address and port (the address applies after a restart).
-  2. **Cameras:** a device, rotation and live preview per camera (one to four), and
-     the resolution, FPS, detection speed and standby time for all of them. Each
-     change is saved at once. Previews need a running board in live mode.
-  3. **Calibrate:** find the 20 on each camera either **On screen**, by clicking
-     the 20 in each preview, or with a **Dart at D20**, like `oche-core orient`.
-     Then fit the wires with the board empty. Each preview shows the fitted wires
-     and the 20 in red. If a camera's red is not the 20, its arrows move it one
-     segment and refit that camera. **Start over** repeats the steps; the saved
-     calibration is kept until a new one succeeds.
+  2. **Cameras:** a device, rotation and live preview per camera (two to four), and
+     the resolution, FPS, detection speed and standby time for all of them. Devices
+     are named as in the terminal UI (name and USB port). Each change is saved at
+     once, and choosing a device starts the board so its preview appears.
+  3. **Calibrate:** each camera shows a still picture (the refresh button takes a
+     new one). **On screen:** with the board empty, **Fit the wires**; a camera
+     with no 20 reference yet starts from a guess near the top of its picture.
+     The fitted wires are drawn in white with the 20 in red, 6 in blue, 3 in
+     orange and 11 in purple. Turn each camera's colours with its arrows until they
+     sit on those numbers, then **Save**, which moves that camera's 20 reference
+     and refits it. The arrows turn two segments at a time: calibration takes the
+     20 to be a segment with a red double, so only every other segment can be it.
+     **Dart at D20** works like `oche-core orient`, then calibrates. **Start over**
+     repeats the steps; the saved calibration is kept until a new one succeeds.
   4. **Test:** throw a few darts and check the scores. In demo mode, buttons and
      clicks on the board inject throws.
 - **Debug** (`/debug/`): service commands, demo throws, the saved configuration
@@ -145,9 +163,10 @@ The screen has five sections, top to bottom:
 3. **Controls:** **Start / Stop / Reset / Wake**, the board **State**, and a
    **Doing** line with an elapsed timer while a command runs (for example
    "Calibrating all cameras; keep the board empty and still").
-4. **Cameras:** each row shows the camera's name and USB port (`v` marks a
+4. **Cameras:** each row shows the camera's name and USB port (`▼` marks a
    dropdown) with a **Calibrate** button. **+ Add** / **- Remove last** change the
-   camera count (one to four) after a review; **Calibrate all** sits below.
+   camera count (two to four: scoring needs two) after a review; **Calibrate
+   all** sits below.
 5. **Detection settings:** detection speed, standby time, and the resolution and FPS
    applied to every assigned camera (they show `mixed` when the cameras differ).
    Each is a dropdown.

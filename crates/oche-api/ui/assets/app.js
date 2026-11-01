@@ -46,6 +46,9 @@ const STANDBY = [
   [3600, "1 hour"]
 ];
 const MAX_CAMERAS = 4;
+/* One camera sees a dart only as a line; scoring needs lines from two
+   (MIN_SCORING_CAMERAS in oche-domain). Setup never goes below this. */
+const MIN_CAMERAS = 2;
 /* Where the daemon looks for the 20 when it has only a calibration
    (hint_for in oche-engine): the outer single of 20. */
 const TWENTY_HINT_MM = 140;
@@ -284,11 +287,11 @@ function labelPoint(label) {
   return polar(radius, -90 + index * 18);
 }
 
-function svgPoint(svg, event, target = svg) {
+function svgPoint(svg, event) {
   const point = svg.createSVGPoint();
   point.x = event.clientX;
   point.y = event.clientY;
-  return point.matrixTransform(target.getScreenCTM().inverse());
+  return point.matrixTransform(svg.getScreenCTM().inverse());
 }
 
 /* ---------- Shared UI ---------- */
@@ -598,7 +601,7 @@ const testedKey = snapshot => snapshot.calibration?.created_unix_ms ?? snapshot.
    current settings. The test is a per-browser note for that calibration. */
 function setupProgress(snapshot) {
   const cameras = snapshot.config.cameras;
-  const camerasDone = cameras.every(camera => camera.device);
+  const camerasDone = cameras.length >= MIN_CAMERAS && cameras.every(camera => camera.device);
   const calibrated = camerasDone && cameras.every(camera => calibrationFor(snapshot.calibration, camera));
   return [true, camerasDone, calibrated, storage.get("tested", null) === testedKey(snapshot)];
 }
@@ -723,10 +726,11 @@ function renderStatusBar({ snapshot, connected }) {
 
 /* ---------- Camera previews ---------- */
 
-/* One camera's latest frame, turned upright by its configured rotation.
-   Frames arrive unrotated, so drawings and clicks use raw image pixels in
-   `frame`, the group that carries the rotation. */
-function createCameraPreview(slot) {
+/* One camera's frame, turned upright by its configured rotation. Frames
+   arrive unrotated, so drawings use raw image pixels in `frame`, the group
+   that carries the rotation. A `still` preview keeps one picture until it is
+   retaken, so drawings over it stay put; otherwise it follows the camera. */
+function createCameraPreview(slot, still = false) {
   const element = document.createElement("div");
   element.className = "camera-preview";
   element.dataset.cameraPreview = slot;
@@ -744,6 +748,9 @@ function createCameraPreview(slot) {
 
   return {
     slot,
+    still,
+    hasFrame: false,
+    rotation: 0,
     element,
     svg,
     frame,
@@ -753,6 +760,9 @@ function createCameraPreview(slot) {
       const key = `${width}x${height}@${rotation}`;
       if (key === layoutKey) return;
       layoutKey = key;
+      this.rotation = rotation;
+      /* A frame of another size or orientation is a different picture. */
+      this.hasFrame = false;
       const turned = rotation % 180 !== 0;
       svg.setAttribute("viewBox", `0 0 ${turned ? height : width} ${turned ? width : height}`);
       const shift = { 0: "", 90: `translate(${height} 0)`, 180: `translate(${width} ${height})`, 270: `translate(0 ${width})` };
@@ -765,6 +775,7 @@ function createCameraPreview(slot) {
       image.setAttribute("href", next);
       if (url) URL.revokeObjectURL(url);
       url = next;
+      this.hasFrame = true;
     },
     /* A message instead of the frame, with an optional Start button. */
     say(text, start = false) {
@@ -774,11 +785,6 @@ function createCameraPreview(slot) {
       if (message.innerHTML !== html) message.innerHTML = html;
       message.hidden = !text;
       svg.style.visibility = text ? "hidden" : "";
-    },
-    /* Image pixel under a click. */
-    pixelAt(event) {
-      const point = svgPoint(svg, event, frame);
-      return [Math.round(point.x), Math.round(point.y)];
     }
   };
 }
@@ -794,7 +800,8 @@ function previewProblem(snapshot, camera) {
   return ["", false];
 }
 
-/* Fetches each visible camera's latest JPEG, one request per camera at a time. */
+/* Fetches each visible camera's latest JPEG, one request per camera at a
+   time; a still preview only until it has a frame. */
 const cameraFeed = {
   previews: new Map(),
   pending: new Set(),
@@ -816,6 +823,13 @@ const cameraFeed = {
     this.fetch(slot, true);
   },
 
+  /* A new picture for a still preview. */
+  retake(slot) {
+    const preview = this.previews.get(slot);
+    if (preview) preview.hasFrame = false;
+    this.fetch(slot);
+  },
+
   tick() {
     if (document.hidden || !daemon.snapshot || !daemon.connected) return;
     this.previews.forEach((_, slot) => this.fetch(slot));
@@ -823,7 +837,8 @@ const cameraFeed = {
 
   async fetch(slot, force = false) {
     const preview = this.previews.get(slot);
-    if (!preview || this.pending.has(slot) || (!force && !isStreaming(daemon.snapshot, slot))) return;
+    if (!preview || this.pending.has(slot)) return;
+    if (!force && (!isStreaming(daemon.snapshot, slot) || (preview.still && preview.hasFrame))) return;
     this.pending.add(slot);
     try {
       const response = await fetch(api.snapshotUrl(slot), { cache: "no-store" });
@@ -867,15 +882,23 @@ function isIpAddress(value) {
   }
 }
 
-/* Same rules as Config::validate in oche-domain, checked before sending. */
-function validateBoard({ name, bind, port }) {
+/* Same rules as Config::validate in oche-domain, checked before sending;
+   only the fields given are checked. */
+function validateBoard(values) {
   const errors = {};
-  if (!name) errors.name = "Enter a name.";
-  else if ([...name].length > 80) errors.name = "Use at most 80 characters.";
-  else if (/[\u0000-\u001f\u007f-\u009f]/.test(name)) errors.name = "Use printable characters only.";
-  if (!isIpAddress(bind)) errors.bind = "Enter an IP address such as 127.0.0.1 or 0.0.0.0.";
-  if (!/^\d{1,5}$/.test(port) || Number(port) < 1 || Number(port) > 65535) {
-    errors.port = "Enter a port between 1 and 65535.";
+  const name = values["board.name"];
+  const bind = values["server.bind"];
+  const port = values["server.port"];
+  if (name === undefined) {
+    /* Not on this form. */
+  } else if (!name) errors["board.name"] = "Enter a name.";
+  else if ([...name].length > 80) errors["board.name"] = "Use at most 80 characters.";
+  else if (/[\u0000-\u001f\u007f-\u009f]/.test(name)) errors["board.name"] = "Use printable characters only.";
+  if (bind !== undefined && !isIpAddress(bind)) {
+    errors["server.bind"] = "Enter an IP address such as 127.0.0.1 or 0.0.0.0.";
+  }
+  if (port !== undefined && (!/^\d{1,5}$/.test(port) || Number(port) < 1 || Number(port) > 65535)) {
+    errors["server.port"] = "Enter a port between 1 and 65535.";
   }
   return errors;
 }
@@ -903,65 +926,103 @@ function setFieldError(input, message) {
   else input.removeAttribute("aria-invalid");
 }
 
-function initBoardPage() {
-  const form = document.getElementById("board-form");
-  const inputs = {
+/* The board name and listen address fields, on step 1 and in Settings. */
+function boardInputs() {
+  return {
     "board.name": document.getElementById("board-name"),
     "server.bind": document.getElementById("host-ip"),
     "server.port": document.getElementById("host-port")
   };
+}
+
+const savedBoardValues = ({ board, server }) => ({
+  "board.name": board.name,
+  "server.bind": server.bind,
+  "server.port": server.port
+});
+
+function fillBoardInputs(inputs, config) {
+  const saved = savedBoardValues(config);
+  Object.entries(inputs).forEach(([key, input]) => {
+    input.value = saved[key];
+  });
+}
+
+/* Greys the listen address where a container's port mapping decides it, and
+   says when a saved address waits for a restart. */
+function renderListener(snapshot, inputs, note, defaultNote) {
+  const fixed = snapshot.listener_fixed;
+  ["server.bind", "server.port"].forEach(key => {
+    if (!inputs[key]) return;
+    inputs[key].disabled = fixed;
+    if (fixed) inputs[key].value = savedBoardValues(snapshot.config)[key];
+  });
+  const { bind, port } = snapshot.config.server;
+  note.classList.toggle("is-warning", !fixed && snapshot.restart_required);
+  note.textContent = fixed
+    ? "OcheCore runs in a container here, so Docker's port mapping decides where it can be reached. To change it, set OCHECORE_BIND or OCHECORE_PORT next to compose.yaml and recreate the container."
+    : snapshot.restart_required
+      ? `Saved, not in use yet: OcheCore still listens on ${snapshot.listening_on}. Restart it to listen on ${bind.includes(":") ? `[${bind}]` : bind}:${port}.`
+      : defaultNote;
+}
+
+/* Validates the form's fields and saves what changed; true when nothing was
+   refused. Disabled fields are left alone. */
+async function saveBoardInputs(inputs) {
+  const saved = savedBoardValues(daemon.snapshot.config);
+  const editable = Object.entries(inputs).filter(([, input]) => !input.disabled);
+  const values = Object.fromEntries(editable.map(([key, input]) => [key, input.value.trim()]));
+  const errors = validateBoard(values);
+  editable.forEach(([key, input]) => setFieldError(input, errors[key]));
+  const invalid = editable.map(([, input]) => input).find(input => input.hasAttribute("aria-invalid"));
+  if (invalid) {
+    invalid.focus();
+    return false;
+  }
+  const changes = Object.entries(values)
+    .map(([key, value]) => [key, key === "server.port" ? Number(value) : value])
+    .filter(([key, value]) => String(value) !== String(saved[key]));
+  try {
+    const snapshot = await api.configure(changes);
+    if (changes.some(([key]) => key.startsWith("server.")) && snapshot?.restart_required) {
+      toast("Saved. Restart OcheCore to listen on the new address.");
+    } else if (changes.length) {
+      toast("Saved.");
+    }
+    return true;
+  } catch (error) {
+    if (inputs[error.key]) {
+      setFieldError(inputs[error.key], error.message);
+      inputs[error.key].focus();
+    } else {
+      toast(error.message);
+    }
+    return false;
+  }
+}
+
+function initBoardPage() {
+  const form = document.getElementById("board-form");
+  const inputs = boardInputs();
   const next = document.querySelector("[data-save-next]");
   let saving = false;
 
+  const note = document.getElementById("listen-note");
+  const defaultNote = note.textContent;
+
   whenReady(snapshot => {
     enterStep(1, snapshot);
-    const { board, server } = snapshot.config;
-    inputs["board.name"].value = board.name;
-    inputs["server.bind"].value = server.bind;
-    inputs["server.port"].value = server.port;
+    fillBoardInputs(inputs, snapshot.config);
   });
-  daemon.subscribe(({ snapshot }) => setStepStates(1, snapshot));
-
-  async function save() {
-    const { config } = daemon.snapshot;
-    const data = {
-      name: inputs["board.name"].value.trim(),
-      bind: inputs["server.bind"].value.trim(),
-      port: inputs["server.port"].value.trim()
-    };
-    const errors = validateBoard(data);
-    setFieldError(inputs["board.name"], errors.name);
-    setFieldError(inputs["server.bind"], errors.bind);
-    setFieldError(inputs["server.port"], errors.port);
-    const invalid = Object.values(inputs).find(input => input.hasAttribute("aria-invalid"));
-    if (invalid) {
-      invalid.focus();
-      return false;
-    }
-    const changes = [
-      ["board.name", data.name, config.board.name],
-      ["server.bind", data.bind, config.server.bind],
-      ["server.port", Number(data.port), config.server.port]
-    ].filter(([, value, current]) => String(value) !== String(current));
-    try {
-      const snapshot = await api.configure(changes);
-      if (snapshot?.restart_required) toast("Saved. The new address applies after OcheCore restarts.");
-      return true;
-    } catch (error) {
-      if (inputs[error.key]) {
-        setFieldError(inputs[error.key], error.message);
-        inputs[error.key].focus();
-      } else {
-        toast(error.message);
-      }
-      return false;
-    }
-  }
+  daemon.subscribe(({ snapshot }) => {
+    setStepStates(1, snapshot);
+    renderListener(snapshot, inputs, note, defaultNote);
+  });
 
   async function saveAndContinue() {
     if (saving || !daemon.snapshot) return;
     saving = true;
-    if (await save()) window.location.href = next.href;
+    if (await saveBoardInputs(inputs)) window.location.href = next.href;
     saving = false;
   }
 
@@ -995,7 +1056,56 @@ function cameraChoices(inventory, cameras) {
   return { resolutions, frameRates: frameRates.sort((a, b) => a - b) };
 }
 
+/* Fills the settings that apply to every camera: #camera-resolution,
+   #camera-fps, #detection-speed and #detection-standby. */
+function renderDetectionSettings(snapshot, inventory) {
+  const { cameras, detection } = snapshot.config;
+  const choices = cameraChoices(inventory, cameras);
+  document.getElementById("camera-resolution").innerHTML =
+    options(choices.resolutions.map(size => [size, size]), `${cameras[0].width}x${cameras[0].height}`);
+  document.getElementById("camera-fps").innerHTML =
+    options(choices.frameRates.map(fps => [fps, `${fps} fps`]), cameras[0].fps);
+  document.getElementById("detection-speed").innerHTML = options(SPEEDS, detection.speed);
+  document.getElementById("detection-standby").innerHTML = options(STANDBY, detection.standby_seconds);
+}
+
+/* Config changes for one of those fields. Every camera gets the same
+   resolution and FPS, as in the terminal UI. */
+function detectionChanges(snapshot, id, value) {
+  const { cameras } = snapshot.config;
+  if (id === "camera-resolution") {
+    const [width, height] = value.split("x").map(Number);
+    return cameras.flatMap(camera => {
+      const sameShape = Math.abs(width / height - camera.width / camera.height) < 0.01;
+      return [
+        [`cameras.${camera.slot}.resolution`, value],
+        ...hintChange(snapshot, camera, sameShape ? [width / camera.width, height / camera.height] : null)
+      ];
+    });
+  }
+  if (id === "camera-fps") return cameras.map(camera => [`cameras.${camera.slot}.fps`, value]);
+  if (id === "detection-speed") return [["detection.speed", value]];
+  if (id === "detection-standby") return [["detection.standby_seconds", value]];
+  return [];
+}
+
 const deviceMatches = (device, path) => device.path === path || (device.aliases || []).includes(path);
+
+/* The `0:1.1` of `.../platform-…-usb-0:1.1:1.0-video-index0`, as usb_port in
+   the terminal UI. */
+function usbPort(path) {
+  const rest = path.split("/").pop().split("-usb-")[1];
+  if (rest === undefined) return null;
+  const ports = rest.split("-video")[0];
+  return ports.endsWith(":1.0") ? ports.slice(0, -4) : ports;
+}
+
+/* A camera as the user knows it, named as in the terminal UI: its name and
+   the USB port it sits in. */
+function deviceLabel(device) {
+  const port = [...(device.aliases || []), device.path].map(usbPort).find(Boolean);
+  return `${device.name || "Camera"} · ${port ? `USB ${port}` : device.path}`;
+}
 
 /* Config changes that keep a camera's 20 when its pixels move: rotation only
    relabels frames, so the hint stays; a resolution with the same aspect ratio
@@ -1029,16 +1139,18 @@ function initCamerasPage() {
     if (daemon.snapshot) render(daemon);
   }
 
-  /* Sends changes, then re-renders from the daemon's reply. */
+  /* Sends changes, then re-renders from the daemon's reply; resolves to the
+     new snapshot, or null when nothing was saved. */
   async function apply(changes, success) {
-    if (busy || !changes.length) return;
+    if (busy || !changes.length) return null;
     busy = true;
     grid.classList.add("is-busy");
-    await attempt(api.configure(changes), success);
+    const snapshot = await attempt(api.configure(changes), success);
     busy = false;
     grid.classList.remove("is-busy");
     renderedKey = "";
     render(daemon);
+    return snapshot;
   }
 
   function deviceOptions(camera) {
@@ -1046,9 +1158,12 @@ function initCamerasPage() {
     const list = [["", "Choose a device"]];
     inventory.devices.forEach(device => {
       const value = known === device ? camera.device : device.path;
-      list.push([value, `${device.name || "Camera"} · ${device.path}${device.error ? " (error)" : ""}`]);
+      list.push([value, `${deviceLabel(device)}${device.error ? " (error)" : ""}`]);
     });
-    if (camera.device && !known) list.push([camera.device, `${camera.device} (not found)`]);
+    if (camera.device && !known) {
+      const port = usbPort(camera.device);
+      list.push([camera.device, `${port ? `USB ${port}` : camera.device} (not found)`]);
+    }
     return options(list, camera.device);
   }
 
@@ -1059,7 +1174,7 @@ function initCamerasPage() {
       <div class="camera-tool-buttons">
         <button class="icon-btn" type="button" data-rotate="${slot}" aria-label="Rotate camera ${slot}" title="Rotate 90°">${icon("rotate")}</button>
         <button class="icon-btn" type="button" data-refresh="${slot}" aria-label="Refresh camera ${slot}" title="Refresh preview and device list">${icon("refresh")}</button>
-        ${count > 1 ? `<button class="icon-btn" type="button" data-remove="${slot}" aria-label="Remove camera ${slot}" title="Remove camera">${icon("remove")}</button>` : ""}
+        ${count > MIN_CAMERAS ? `<button class="icon-btn" type="button" data-remove="${slot}" aria-label="Remove camera ${slot}" title="Remove camera">${icon("remove")}</button>` : ""}
       </div>`;
     return `
       <section class="panel camera-card" data-camera-card="${slot}" aria-labelledby="camera-title-${slot}">
@@ -1101,13 +1216,7 @@ function initCamerasPage() {
         cameraFeed.forget(slot);
       });
 
-      const choices = cameraChoices(inventory, cameras);
-      document.getElementById("camera-resolution").innerHTML =
-        options(choices.resolutions.map(size => [size, size]), `${cameras[0].width}x${cameras[0].height}`);
-      document.getElementById("camera-fps").innerHTML =
-        options(choices.frameRates.map(fps => [fps, `${fps} fps`]), cameras[0].fps);
-      document.getElementById("detection-speed").innerHTML = options(SPEEDS, detection.speed);
-      document.getElementById("detection-standby").innerHTML = options(STANDBY, detection.standby_seconds);
+      renderDetectionSettings(snapshot, inventory);
     }
 
     cameras.forEach(camera => {
@@ -1124,8 +1233,10 @@ function initCamerasPage() {
     if (snapshot.mode === "live" && inventory.warnings.length) notes.push(inventory.warnings.join(" "));
     lede.textContent = [ledeText, ...notes].join(" ");
 
-    const missing = needsCameras(snapshot) && cameras.find(camera => !camera.device);
-    setNextEnabled(next, !missing, missing ? `Choose a device for camera ${missing.slot}.` : "");
+    const blocked = !needsCameras(snapshot) ? ""
+      : cameras.length < MIN_CAMERAS ? "Add a second camera: scoring needs at least two."
+      : cameras.filter(camera => !camera.device).map(camera => `Choose a device for camera ${camera.slot}.`)[0] || "";
+    setNextEnabled(next, !blocked, blocked);
     setStepStates(2, snapshot);
   }
 
@@ -1144,6 +1255,8 @@ function initCamerasPage() {
     } else if (refresh) {
       cameraFeed.refresh(Number(refresh.dataset.refresh));
       discover();
+    } else if (remove && cameras.length <= MIN_CAMERAS) {
+      toast("Scoring needs at least two cameras.");
     } else if (remove) {
       /* Slots stay contiguous: later cameras move up one place, with their
          settings and their 20. */
@@ -1175,7 +1288,7 @@ function initCamerasPage() {
     }
   });
 
-  grid.addEventListener("change", event => {
+  grid.addEventListener("change", async event => {
     const slot = Number(event.target.dataset.device);
     const snapshot = daemon.snapshot;
     if (!slot || !snapshot) return;
@@ -1187,27 +1300,15 @@ function initCamerasPage() {
     }
     setFieldError(event.target, "");
     /* A different device sees the board from somewhere else: its 20 is unknown. */
-    apply([[`cameras.${slot}.device`, path], [`cameras.${slot}.hint`, ""]]);
+    const saved = await apply([[`cameras.${slot}.device`, path], [`cameras.${slot}.hint`, ""]]);
+    /* Cameras only stream while the board runs: start it to show the preview. */
+    if (saved && path && saved.mode === "live" && saved.state !== "running") {
+      await attempt(api.command("start"));
+    }
   });
 
   settings.addEventListener("change", event => {
-    const snapshot = daemon.snapshot;
-    if (!snapshot) return;
-    const { cameras } = snapshot.config;
-    const { id, value } = event.target;
-    if (id === "camera-resolution") {
-      const [width, height] = value.split("x").map(Number);
-      apply(cameras.flatMap(camera => {
-        const sameShape = Math.abs(width / height - camera.width / camera.height) < 0.01;
-        return [
-          [`cameras.${camera.slot}.resolution`, value],
-          ...hintChange(snapshot, camera, sameShape ? [width / camera.width, height / camera.height] : null)
-        ];
-      }));
-    }
-    if (id === "camera-fps") apply(cameras.map(camera => [`cameras.${camera.slot}.fps`, value]));
-    if (id === "detection-speed") apply([["detection.speed", value]]);
-    if (id === "detection-standby") apply([["detection.standby_seconds", value]]);
+    if (daemon.snapshot) apply(detectionChanges(daemon.snapshot, event.target.id, event.target.value));
   });
 
   whenReady(snapshot => {
@@ -1219,23 +1320,74 @@ function initCamerasPage() {
 
 /* ---------- Step 3: calibrate ---------- */
 
+/* Segments painted over each camera so the fitted orientation can be checked
+   against the board's printed numbers at a glance. */
+const ORIENTATION_MARKS = [
+  { number: 20, color: "#ff3b30", name: "red" },
+  { number: 6, color: "#2f7bff", name: "blue" },
+  { number: 3, color: "#ff9500", name: "orange" },
+  { number: 11, color: "#b44dff", name: "purple" }
+];
+const MARKS_TEXT = "red on 20, blue on 6, orange on 3, purple on 11";
+
+/* The daemon takes the 20 to be the red double nearest the camera's hint
+   (detect in oche-calibration). The real 20 has a red double too, so only
+   every other segment can be it: the arrows turn two segments at a time. */
+const TURN_SEGMENTS = 2;
+
 /* Two ways to find the 20 on each camera:
-   - "pick", on screen (the default): click the 20 on each camera, which sets
-     cameras.<slot>.hint, then calibrate. The fitted wires and the 20 in red
-     are drawn over each camera; the arrows move a camera's hint to the next
-     segment and refit that camera alone.
+   - "pick", on screen (the default): fit the wires, starting from a guessed
+     hint where a camera has none. The fitted wires are drawn over a still
+     picture with the 20, 6, 3 and 11 in colour; the arrows turn the colours
+     here, and Save moves each turned camera's hint to its new 20 and refits
+     that camera.
    - "dart", dart at D20, as in the terminal: orient_begin, one dart at D20,
      orient_finish, then calibrate with the board empty. */
 const CALIBRATION_MODES = {
   pick: {
-    lede: "Click the 20 on each camera, then OcheCore fits the wires. Check the red segment is the 20 everywhere.",
-    blocked: "Calibrate every camera first."
+    lede: `OcheCore fits the wires on every camera. Then turn each camera's colours onto the board's numbers: ${MARKS_TEXT}.`,
+    blocked: "Fit the wires and save the colours on every camera first."
   },
   dart: {
     lede: "Throw one dart at D20, like in the terminal: OcheCore finds the 20 on every camera, then fits the wires.",
     blocked: "Calibrate every camera first."
   }
 };
+
+/* The fitted wires, high-contrast, with the orientation marks turned by
+   `offset` segments. Labels stay upright on rotated cameras. */
+function drawCalibration(overlay, calibration, record, camera, offset) {
+  const map = boardToImage(calibration);
+  if (!map) return;
+  const b = record.board;
+  const radii = [b.inner_bull, b.outer_bull, b.treble_inner, b.treble_outer, b.double_inner, b.double_outer];
+  const scale = Math.max(camera.width, camera.height) / 640;
+  ORIENTATION_MARKS.forEach(({ number, color }) => {
+    const index = SEGMENTS.indexOf(number) + offset;
+    const start = -99 + index * 18;
+    svgEl("polygon", {
+      points: pointsAttr(sectorPoints(b.outer_bull, b.double_outer, start, start + 18).map(map)),
+      fill: color,
+      "fill-opacity": 0.55
+    }, overlay);
+  });
+  drawWires(overlay, map, { stroke: "#000", "stroke-width": 3.4 * scale, opacity: 0.55 }, radii);
+  drawWires(overlay, map, { stroke: "#fff", "stroke-width": 1.4 * scale, opacity: 1 }, radii);
+  ORIENTATION_MARKS.forEach(({ number, color }) => {
+    const [x, y] = map(polar(b.double_outer + 24, -90 + (SEGMENTS.indexOf(number) + offset) * 18));
+    const group = svgEl("g", { transform: `translate(${round1(x)} ${round1(y)}) rotate(${-camera.rotation})` }, overlay);
+    svgEl("circle", { r: 15 * scale, fill: color, stroke: "#fff", "stroke-width": 2.5 * scale }, group);
+    const label = svgEl("text", {
+      "text-anchor": "middle",
+      "dominant-baseline": "central",
+      fill: "#fff",
+      "font-size": 15 * scale,
+      "font-weight": 900,
+      "font-family": "Arial Rounded MT Bold, Trebuchet MS, sans-serif"
+    }, group);
+    label.textContent = number;
+  });
+}
 
 function initCalibrationPage() {
   const grid = document.getElementById("calibration-grid");
@@ -1247,6 +1399,7 @@ function initCalibrationPage() {
   };
   const buttons = {
     fit: document.getElementById("fit-wires"),
+    save: document.getElementById("save-turns"),
     begin: document.getElementById("start-orientation"),
     find: document.getElementById("lock-d20"),
     calibrate: document.getElementById("calibrate-cameras")
@@ -1263,6 +1416,8 @@ function initCalibrationPage() {
     redo: false,
     /* orient_finish stored a 20 for every camera since the last calibration. */
     found: false,
+    /* Unsaved turns of the colours per camera slot, in segments. */
+    turns: {},
     /* The camera being measured, "all", or null. */
     busy: null
   };
@@ -1273,86 +1428,72 @@ function initCalibrationPage() {
     if (value) session.set("orienting", value);
     else session.remove("orienting");
   };
+  const turned = () => Object.values(ui.turns).some(Boolean);
 
   /* Where the procedure is, from the daemon's state and the steps run here. */
   function progress(snapshot) {
     const cameras = assignedCameras(snapshot);
     const calibrated = cameras.length > 0 &&
       snapshot.config.cameras.every(camera => calibrationFor(snapshot.calibration, camera));
-    const oriented = camerasNeedingOrientation(snapshot).length === 0;
-    const orienting = ui.orienting === snapshot.session_id;
     if (ui.mode === "pick") {
-      if (calibrated && !ui.redo) return { calibrated, oriented, stage: 2 };
-      return { calibrated, oriented, stage: oriented ? 1 : 0 };
+      if (!calibrated || ui.redo) return { calibrated, stage: 0 };
+      return { calibrated, stage: turned() ? 1 : 2 };
     }
-    if (calibrated && !ui.redo) return { calibrated, oriented, stage: 3 };
-    if (orienting) return { calibrated, oriented, stage: 1 };
-    return { calibrated, oriented, stage: (oriented && !ui.redo) || ui.found ? 2 : 0 };
+    const oriented = camerasNeedingOrientation(snapshot).length === 0;
+    if (calibrated && !ui.redo) return { calibrated, stage: 3 };
+    if (ui.orienting === snapshot.session_id) return { calibrated, stage: 1 };
+    return { calibrated, stage: (oriented && !ui.redo) || ui.found ? 2 : 0 };
   }
 
   function chip(snapshot, camera, state) {
     if (!camera.device) return ["No device", "wait"];
     if (ui.busy === "all" || ui.busy === camera.slot) return ["Measuring…", "busy"];
     const calibration = calibrationFor(snapshot.calibration, camera);
-    if (calibration && !ui.redo) return [`Wire fit ✓ ${calibration.wire_rms_mm.toFixed(2)} mm`, "done"];
+    if (calibration && !ui.redo) {
+      if (ui.turns[camera.slot]) return ["Turned, not saved", "found"];
+      return [`Wire fit ✓ ${calibration.wire_rms_mm.toFixed(2)} mm`, "done"];
+    }
     if (state.stage === 1 && ui.mode === "dart") return ["Waiting for dart", "wait"];
-    if (camera.hint || calibration) return ["20 marked", "found"];
-    return [ui.mode === "pick" ? "Click the 20" : "Waiting", "wait"];
+    return ["Waiting", "wait"];
   }
 
   function preview(slot) {
     if (!previews.has(slot)) {
-      const created = createCameraPreview(slot);
+      const created = createCameraPreview(slot, true);
       previews.set(slot, created);
       cameraFeed.watch(created);
     }
     return previews.get(slot);
   }
 
-  /* Wires and the 20 in red where calibrated; the 20 that will be used,
-     as a yellow dot, otherwise. */
-  function drawOverlay(snapshot, camera, view) {
+  function drawOverlay(snapshot, camera) {
+    const view = preview(camera.slot);
     view.overlay.replaceChildren();
     const calibration = calibrationFor(snapshot.calibration, camera);
-    const map = calibration && !ui.redo && boardToImage(calibration);
-    const scale = Math.max(camera.width, camera.height) / 640;
-    if (map) {
-      const b = snapshot.calibration.board;
-      svgEl("polygon", {
-        points: pointsAttr(sectorPoints(b.outer_bull, b.double_outer, -99, -81).map(map)),
-        fill: COLORS.red,
-        opacity: 0.6,
-        stroke: COLORS.yellow,
-        "stroke-width": 1.5 * scale
-      }, view.overlay);
-      drawWires(view.overlay, map, { stroke: COLORS.lime, "stroke-width": 1.2 * scale, opacity: 0.9 },
-        [b.inner_bull, b.outer_bull, b.treble_inner, b.treble_outer, b.double_inner, b.double_outer]);
-      return;
-    }
-    const hint = camera.hint || (calibration && hintAt(calibration, 0));
-    if (hint) {
-      svgEl("circle", {
-        cx: hint[0], cy: hint[1], r: 9 * scale,
-        fill: COLORS.yellow, stroke: COLORS.ink, "stroke-width": 3 * scale
-      }, view.overlay);
+    if (calibration && !ui.redo) {
+      drawCalibration(view.overlay, calibration, snapshot.calibration, camera, ui.turns[camera.slot] || 0);
     }
   }
+
+  const retakeAll = () => previews.forEach((_, slot) => cameraFeed.retake(slot));
 
   function cardMarkup(snapshot, camera, state) {
     const { slot } = camera;
     const count = snapshot.config.cameras.length;
-    const calibration = calibrationFor(snapshot.calibration, camera);
-    const canTurn = ui.mode === "pick" && state.stage === 2 && calibration;
+    const canTurn = ui.mode === "pick" && state.stage > 0 && calibrationFor(snapshot.calibration, camera);
+    const tools = `
+      <span class="cal-status" data-cal-status></span>
+      <button class="icon-btn" type="button" data-retake="${slot}" aria-label="Take a new picture with camera ${slot}" title="New picture">${icon("refresh")}</button>`;
     return `
       <section class="panel camera-card" aria-labelledby="camera-title-${slot}">
-        ${cameraCardHead(slot, count, '<span class="cal-status" data-cal-status></span>')}
+        ${cameraCardHead(slot, count, `<div class="camera-tool-buttons">${tools}</div>`)}
         <div data-preview-slot="${slot}"></div>
         ${canTurn ? `
           <div class="orient-controls">
-            <span>Turn the red to the 20</span>
-            <div class="turn-buttons" role="group" aria-label="Turn the red segment on camera ${slot}">
-              <button type="button" data-turn="-1" data-camera="${slot}" aria-label="One segment anticlockwise">${icon("left")}</button>
-              <button type="button" data-turn="1" data-camera="${slot}" aria-label="One segment clockwise">${icon("right")}</button>
+            <span>Turn the colours</span>
+            <div class="turn-buttons" role="group" aria-label="Turn the colours on camera ${slot}">
+              <button type="button" data-turn="-1" data-camera="${slot}" aria-label="Turn anticlockwise">${icon("left")}</button>
+              <button type="button" data-turn="1" data-camera="${slot}" aria-label="Turn clockwise">${icon("right")}</button>
             </div>
           </div>` : ""}
       </section>`;
@@ -1376,13 +1517,14 @@ function initCalibrationPage() {
       });
     });
     const blocked = !live || !running || Boolean(ui.busy);
-    buttons.fit.disabled = blocked || state.stage !== 1;
+    buttons.fit.disabled = blocked || state.stage !== 0;
+    buttons.save.disabled = blocked || state.stage !== 1;
     buttons.begin.disabled = blocked || state.stage !== 0;
     buttons.find.disabled = blocked || state.stage !== 1;
     buttons.calibrate.disabled = blocked || state.stage !== 2;
     resetButton.disabled = Boolean(ui.busy) || !live;
     setStepStates(3, snapshot);
-    setNextEnabled(next, !live || (state.calibrated && !ui.busy), CALIBRATION_MODES[ui.mode].blocked);
+    setNextEnabled(next, !live || (state.calibrated && !ui.busy && !turned()), CALIBRATION_MODES[ui.mode].blocked);
   }
 
   function render({ snapshot }) {
@@ -1398,9 +1540,7 @@ function initCalibrationPage() {
         const view = preview(camera.slot);
         grid.querySelector(`[data-preview-slot="${camera.slot}"]`).replaceWith(view.element);
         view.layout(camera);
-        drawOverlay(snapshot, camera, view);
-        /* Clicking marks the 20 while the procedure is open in pick mode. */
-        view.element.classList.toggle("is-pickable", ui.mode === "pick" && state.stage < 2 && !ui.busy);
+        drawOverlay(snapshot, camera);
       });
     }
     cameras.forEach((camera, index) => {
@@ -1419,17 +1559,27 @@ function initCalibrationPage() {
     renderSteps(snapshot, state);
   }
 
-  async function measure(camera, success) {
-    ui.busy = camera ?? "all";
+  /* Runs one daemon step with every control locked, then shows new pictures. */
+  async function step(busy, run) {
+    ui.busy = busy;
     render(daemon);
-    const result = await attempt(api.command("calibrate", camera ? { camera } : {}), success);
-    if (result) {
-      ui.redo = false;
-      ui.found = false;
-    }
+    const result = await run();
     ui.busy = null;
     renderedKey = "";
     render(daemon);
+    retakeAll();
+    return result;
+  }
+
+  async function measure(camera, success) {
+    const result = await step(camera ?? "all", () =>
+      attempt(api.command("calibrate", camera ? { camera } : {}), success));
+    if (result) {
+      ui.redo = false;
+      ui.found = false;
+      renderedKey = "";
+      render(daemon);
+    }
     return result;
   }
 
@@ -1440,25 +1590,51 @@ function initCalibrationPage() {
       storage.set("calibration-mode", ui.mode);
       setOrienting(null);
       ui.found = false;
+      ui.turns = {};
       render(daemon);
     });
   });
 
-  buttons.fit.addEventListener("click", () =>
-    measure(null, "Calibrated. Check the red segment is the 20 on every camera."));
+  /* A camera with neither a hint nor a calibration starts from a guess near
+     the top of its picture; the colours show where that put the 20. */
+  buttons.fit.addEventListener("click", async () => {
+    const guesses = assignedCameras(daemon.snapshot)
+      .filter(camera => camera.hint == null && !calibrationFor(daemon.snapshot.calibration, camera))
+      .map(camera => [`cameras.${camera.slot}.hint`, `${Math.round(camera.width / 2)},${Math.round(camera.height * 0.08)}`]);
+    if (guesses.length && !(await step("all", () => attempt(api.configure(guesses))))) return;
+    ui.turns = {};
+    await measure(null, `Wires fitted. Turn each camera until ${MARKS_TEXT}.`);
+  });
+
+  /* Moves each turned camera's hint to the segment now shown as the 20 and
+     refits that camera against the board already measured. */
+  buttons.save.addEventListener("click", async () => {
+    for (const [slot, turn] of Object.entries(ui.turns).filter(([, turn]) => turn)) {
+      const snapshot = daemon.snapshot;
+      const camera = snapshot.config.cameras[slot - 1];
+      const calibration = camera && calibrationFor(snapshot.calibration, camera);
+      const hint = calibration && hintAt(calibration, turn * 18);
+      if (!hint || hint[0] >= camera.width || hint[1] >= camera.height) {
+        toast(`Camera ${slot}: that 20 is outside the picture.`);
+        return;
+      }
+      const saved = await step(Number(slot), () => attempt(api.setConfig(`cameras.${slot}.hint`, hint.join(","))));
+      if (!saved || !(await measure(Number(slot)))) return;
+      delete ui.turns[slot];
+    }
+    renderedKey = "";
+    render(daemon);
+    toast("Saved. Every camera now uses the 20 you set.");
+  });
 
   buttons.begin.addEventListener("click", async () => {
-    ui.busy = "all";
-    render(daemon);
-    const result = await attempt(api.command("orient_begin"), "Now throw one dart at D20 and leave it in.");
-    ui.busy = null;
+    const result = await step("all", () =>
+      attempt(api.command("orient_begin"), "Now throw one dart at D20 and leave it in."));
     if (result) setOrienting(result.session_id);
     render(daemon);
   });
 
-  buttons.find.addEventListener("click", async () => {
-    ui.busy = "all";
-    render(daemon);
+  buttons.find.addEventListener("click", () => step("all", async () => {
     try {
       await api.command("orient_finish");
       setOrienting(null);
@@ -1469,52 +1645,33 @@ function initCalibrationPage() {
       if (error.status === 409) setOrienting(null);
       toast(error.message);
     }
-    ui.busy = null;
-    renderedKey = "";
-    render(daemon);
-  });
+  }));
 
   buttons.calibrate.addEventListener("click", () =>
-    measure(null, "Calibrated. Check the red segment is the 20 on every camera."));
+    measure(null, `Calibrated. Check ${MARKS_TEXT} on every camera.`));
 
-  grid.addEventListener("click", async event => {
+  grid.addEventListener("click", event => {
     const snapshot = daemon.snapshot;
     if (!snapshot || ui.busy) return;
-    const turn = event.target.closest("[data-turn]");
-    if (turn) {
-      /* Move this camera's 20 one segment and refit it against the measured board. */
-      const slot = Number(turn.dataset.camera);
-      const camera = snapshot.config.cameras[slot - 1];
-      const hint = hintAt(calibrationFor(snapshot.calibration, camera), Number(turn.dataset.turn) * 18);
-      if (!hint || hint[0] >= camera.width || hint[1] >= camera.height) {
-        toast("That segment is outside this camera's view.");
-        return;
-      }
-      ui.busy = slot;
-      render(daemon);
-      const saved = await attempt(api.setConfig(`cameras.${slot}.hint`, hint.join(",")));
-      ui.busy = null;
-      if (saved) await measure(slot, `Camera ${slot} refitted.`);
-      else render(daemon);
+    const retake = event.target.closest("[data-retake]");
+    if (retake) {
+      cameraFeed.retake(Number(retake.dataset.retake));
       return;
     }
-    const target = event.target.closest(".camera-preview.is-pickable");
-    if (!target || event.target.closest("button")) return;
-    const slot = Number(target.dataset.cameraPreview);
-    const camera = snapshot.config.cameras[slot - 1];
-    if (!camera?.device || !isStreaming(snapshot, slot)) return;
-    const [x, y] = previews.get(slot).pixelAt(event);
-    if (x < 0 || y < 0 || x >= camera.width || y >= camera.height) return;
-    const saved = await attempt(api.setConfig(`cameras.${slot}.hint`, `${x},${y}`), `Camera ${slot}: 20 marked.`);
-    if (saved) {
-      renderedKey = "";
-      render(daemon);
-    }
+    const turn = event.target.closest("[data-turn]");
+    if (!turn) return;
+    /* Only the drawing turns; Save sends it to the daemon. */
+    const slot = Number(turn.dataset.camera);
+    ui.turns[slot] = ((ui.turns[slot] || 0) + Number(turn.dataset.turn) * TURN_SEGMENTS + 30) % 20 - 10;
+    if (!ui.turns[slot]) delete ui.turns[slot];
+    drawOverlay(snapshot, snapshot.config.cameras[slot - 1]);
+    render(daemon);
   });
 
   resetButton.addEventListener("click", () => {
     ui.redo = true;
     ui.found = false;
+    ui.turns = {};
     setOrienting(null);
     renderedKey = "";
     render(daemon);
@@ -1650,6 +1807,120 @@ function initTestPage() {
   });
 }
 
+/* ---------- Settings: the terminal UI's settings, in the browser ---------- */
+
+/* Frames analysed per second per camera (Speed::analysis_hz in oche-domain). */
+const ANALYSIS_HZ = { very_low: 3, low: 5, default: 10, high: 15, very_high: 30 };
+
+/* What detection is doing, like the terminal UI's detection line. */
+function detectionSummary(snapshot) {
+  if (snapshot.mode === "demo") return "Demo mode: throws are injected from the Debug page.";
+  if (snapshot.mode === "control_only") return "Off: this daemon runs without cameras (--no-capture).";
+  if (snapshot.state !== "running") return "Cameras are off. Start the board on the Live page.";
+  if (!snapshot.capabilities.calibration) return "Needs calibration: empty the board, then calibrate.";
+  if (!snapshot.capabilities.vision) return "Needs at least two calibrated cameras to score.";
+  return `Live · ${ANALYSIS_HZ[snapshot.config.detection.speed]} analyses per second per camera.`;
+}
+
+/* One camera as the terminal UI lists it: device, state and calibration. */
+function cameraSummary(snapshot, camera, inventory) {
+  const device = inventory.devices.find(candidate => deviceMatches(candidate, camera.device));
+  const name = device ? deviceLabel(device) : camera.device || "No device";
+  const status = cameraStatus(snapshot, camera.slot);
+  const state = {
+    streaming: () => `streaming ${status.fps.toFixed(1)} fps`,
+    starting: () => "starting",
+    error: () => `error: ${status.error || "unknown"}`
+  }[status?.state]?.() ?? "off";
+  const calibration = calibrationFor(snapshot.calibration, camera);
+  return {
+    name,
+    detail: `${state} · ${calibration ? `calibrated, wire fit ${calibration.wire_rms_mm.toFixed(2)} mm` : "not calibrated"}`,
+    problem: snapshot.mode === "live" && (status?.state === "error" || !camera.device)
+  };
+}
+
+function initSettingsPage() {
+  const all = boardInputs();
+  const forms = [
+    [document.getElementById("board-form"), { "board.name": all["board.name"] }],
+    [document.getElementById("network-form"), { "server.bind": all["server.bind"], "server.port": all["server.port"] }]
+  ];
+  const network = forms[1][1];
+  const networkSave = document.querySelector("#network-form [type=submit]");
+  const note = document.getElementById("listen-note");
+  const defaultNote = note.textContent;
+  const list = document.getElementById("camera-list");
+  const summary = document.getElementById("detection-summary");
+  const settings = document.getElementById("detection-settings");
+  let inventory = { devices: [], warnings: [] };
+  let settingsKey = "";
+  let saving = false;
+
+  function render({ snapshot }) {
+    list.innerHTML = snapshot.config.cameras.map(camera => {
+      const { name, detail, problem } = cameraSummary(snapshot, camera, inventory);
+      return `
+        <li${problem ? ' class="is-problem"' : ""}>
+          <span class="cam-number">${String(camera.slot).padStart(2, "0")}</span>
+          <div>
+            <strong>${escapeHtml(name)}</strong>
+            <small>${escapeHtml(detail)}</small>
+          </div>
+        </li>`;
+    }).join("");
+    summary.textContent = detectionSummary(snapshot);
+    renderListener(snapshot, network, note, defaultNote);
+    networkSave.disabled = snapshot.listener_fixed;
+    /* Leave a list alone while it is being used. */
+    const key = JSON.stringify([snapshot.config.cameras, snapshot.config.detection, inventory.devices.length]);
+    if (key !== settingsKey && !settings.contains(document.activeElement)) {
+      settingsKey = key;
+      renderDetectionSettings(snapshot, inventory);
+    }
+  }
+
+  forms.forEach(([form, inputs]) => {
+    form.addEventListener("submit", async event => {
+      event.preventDefault();
+      if (saving || !daemon.snapshot) return;
+      saving = true;
+      await saveBoardInputs(inputs);
+      saving = false;
+    });
+    form.addEventListener("input", event => setFieldError(event.target, ""));
+  });
+
+  settings.addEventListener("change", async event => {
+    if (!daemon.snapshot) return;
+    await attempt(api.configure(detectionChanges(daemon.snapshot, event.target.id, event.target.value)), "Saved.");
+    settingsKey = "";
+    event.target.blur();
+    render(daemon);
+  });
+
+  whenReady(async snapshot => {
+    fillBoardInputs(all, snapshot.config);
+    daemon.subscribe(render);
+    try {
+      inventory = await api.availableCameras();
+    } catch {
+      /* Devices show by path until discovery answers. */
+    }
+    settingsKey = "";
+    render(daemon);
+  });
+}
+
+/* Setup pages have no section links; once the board is set up, an Exit link
+   leads back to Settings. */
+function initSetupExit() {
+  const exit = document.querySelector("[data-exit-setup]");
+  if (exit) daemon.subscribe(({ snapshot }) => {
+    exit.hidden = !isSetUp(snapshot);
+  });
+}
+
 /* ---------- Board view: the default page once the board is set up ---------- */
 
 const timeOf = event => new Date(event.unix_time_ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -1720,5 +1991,7 @@ document.addEventListener("DOMContentLoaded", () => {
   if (page === "cameras") initCamerasPage();
   if (page === "calibrate") initCalibrationPage();
   if (page === "test") initTestPage();
+  if (page === "settings") initSettingsPage();
+  if (["board", "cameras", "calibrate", "test"].includes(page)) initSetupExit();
   daemon.start();
 });

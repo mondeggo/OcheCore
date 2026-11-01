@@ -16,8 +16,9 @@ expose it only on a trusted network or behind appropriate access controls.
 | GET | `/api/v1/events/recent` | Up to 64 events, oldest first |
 
 Other `GET` paths serve the browser UI embedded in the binary (`/` and the
-`/setup/` and `/debug/` pages, see [Using OcheCore](usage.md#browser-ui)). It uses
-only the routes above; unknown paths return the same 404 JSON error.
+`/settings/`, `/setup/` and `/debug/` pages, see
+[Using OcheCore](usage.md#browser-ui)). It uses only the routes above; unknown
+paths return the same 404 JSON error.
 
 Commands use JSON, for example `{"command":"start"}`. Available commands:
 `start`, `stop`, `reset`, `wake`, `demo_throw` with string `label`, and
@@ -77,6 +78,9 @@ Configuration changes use:
 Unknown/read-only keys or invalid values return 400. Board ID/schema version are
 read only. Listening changes require restart; `restart_required` reports this.
 `listening_on` reports the effective listener including command-line overrides.
+`listener_fixed` is true when the daemon runs with `OCHECORE_CONTAINER=1`, which
+the container image sets: the port mapping decides where the board is reachable,
+so `server.bind` and `server.port` changes return 400 and change nothing.
 
 Snapshots include configuration, API version, session ID, state revision, event
 sequence, monotonic uptime, service/scene state, mode, accepted throws, physical

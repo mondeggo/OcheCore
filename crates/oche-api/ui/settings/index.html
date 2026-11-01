@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f1e7">
+  <meta name="description" content="Board, camera and detection settings for OcheCore.">
+  <title>Settings · OcheCore</title>
+  <link rel="icon" href="../assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body data-page="settings">
+  <a class="skip-link" href="#main-content">Skip to content</a>
+
+  <header class="site-header">
+    <a class="brand" href="../index.html" aria-label="OcheCore live view">
+      <svg class="brand-mark" viewBox="0 0 48 48" aria-hidden="true">
+        <rect width="48" height="48" rx="14" fill="#17261f"/>
+        <circle cx="24" cy="24" r="14" fill="#203b31" stroke="#8bdef4" stroke-width="2"/>
+        <circle cx="24" cy="24" r="8" fill="none" stroke="#91dfb7" stroke-width="2"/>
+        <circle cx="24" cy="24" r="2.6" fill="#ddf56f"/>
+        <path d="M8 17v14M40 17v14" fill="none" stroke="#8bdef4" stroke-width="2.5" stroke-linecap="round"/>
+      </svg>
+      <span class="brand-name">Oche<span>Core</span></span>
+    </a>
+    <nav class="app-nav" aria-label="Sections">
+      <a href="../index.html">Live</a>
+      <a href="../settings/index.html" aria-current="page">Settings</a>
+      <a href="../debug/index.html">Debug</a>
+    </nav>
+    <a class="help-link" href="https://github.com/mondeggo/OcheCore" target="_blank" rel="noreferrer" aria-label="Open the OcheCore documentation">?</a>
+  </header>
+
+  <main class="page-shell" id="main-content">
+    <div class="page-body settings-layout">
+      <div class="settings-column">
+        <form class="panel" id="board-form" aria-labelledby="board-title" novalidate>
+          <div class="panel-header">
+            <h2 id="board-title">Board</h2>
+            <button class="btn btn-small btn-primary" type="submit">Save</button>
+          </div>
+          <div class="field">
+            <label for="board-name">Name</label>
+            <input id="board-name" name="board-name" type="text" autocomplete="off" maxlength="80">
+          </div>
+        </form>
+
+        <form class="panel" id="network-form" aria-labelledby="network-title" novalidate>
+          <div class="panel-header">
+            <h2 id="network-title">Network</h2>
+            <button class="btn btn-small btn-primary" type="submit">Save</button>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="host-ip">IP address</label>
+              <input id="host-ip" name="host-ip" type="text" autocomplete="off" spellcheck="false" maxlength="45">
+            </div>
+            <div class="field">
+              <label for="host-port">Port</label>
+              <input id="host-port" name="host-port" type="text" inputmode="numeric" autocomplete="off" maxlength="5">
+            </div>
+          </div>
+          <p class="hint settings-row" id="listen-note">127.0.0.1 keeps it on this computer; 0.0.0.0 serves it on every network. Saved addresses apply after OcheCore restarts.</p>
+        </form>
+
+        <section class="panel" aria-labelledby="setup-title">
+          <h2 id="setup-title">Setup</h2>
+          <p class="hint">Go through the board, cameras, calibration and a test throw again. Each step keeps your current settings until you change them.</p>
+          <a class="btn btn-small btn-lime settings-row" href="../setup/index.html">Run setup again</a>
+        </section>
+      </div>
+
+      <div class="settings-column">
+        <section class="panel" aria-labelledby="cameras-title">
+          <div class="panel-header">
+            <h2 id="cameras-title">Cameras</h2>
+            <div class="settings-actions">
+              <a class="btn btn-small btn-ghost" href="../setup/cameras.html">Change</a>
+              <a class="btn btn-small btn-ghost" href="../setup/calibrate.html">Calibrate</a>
+            </div>
+          </div>
+          <ol class="settings-list" id="camera-list" aria-live="polite"></ol>
+        </section>
+
+        <section class="panel" aria-labelledby="detection-title">
+          <h2 id="detection-title">Detection</h2>
+          <p class="hint" id="detection-summary"></p>
+          <div class="field-row settings-row" id="detection-settings" role="group" aria-label="Detection settings">
+            <div class="field">
+              <label for="detection-speed">Detection speed</label>
+              <select id="detection-speed"></select>
+            </div>
+            <div class="field">
+              <label for="detection-standby">Standby after</label>
+              <select id="detection-standby"></select>
+            </div>
+            <div class="field">
+              <label for="camera-resolution">Resolution</label>
+              <select id="camera-resolution"></select>
+            </div>
+            <div class="field">
+              <label for="camera-fps">Frame rate</label>
+              <select id="camera-fps"></select>
+            </div>
+          </div>
+          <p class="hint settings-row">Resolution and frame rate apply to every camera. Each change is saved at once.</p>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <footer class="status-bar" aria-label="Board status">
+    <span class="status-state" id="status-state" data-tone="busy">Connecting</span>
+    <span class="status-item" id="status-cameras"></span>
+    <span class="status-item" id="status-address"></span>
+    <span class="status-item status-preview" id="status-connection">Connecting…</span>
+  </footer>
+
+  <script src="../assets/app.js" defer></script>
+</body>
+</html>

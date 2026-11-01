@@ -1,5 +1,5 @@
 use anyhow::{Result, bail};
-use oche_domain::{Config, ConfigChange};
+use oche_domain::{Config, ConfigChange, MIN_SCORING_CAMERAS};
 use oche_engine::storage::Store;
 use std::{
     io::{self, BufRead, IsTerminal, Write},
@@ -156,15 +156,25 @@ fn wizard(mut config: Config, input: &mut impl BufRead, output: &mut impl Write)
         ),
         ("Port", "server.port", config.server.port.to_string()),
         (
-            "Camera count (1–4)",
+            "Camera count (2–4)",
             "cameras.count",
-            config.cameras.len().to_string(),
+            config.cameras.len().max(MIN_SCORING_CAMERAS).to_string(),
         ),
     ];
     for (label, key, default) in fields {
         loop {
             let value = answer(input, output, label, &default)?;
-            match change(&config, key, &value) {
+            let checked = if key == "cameras.count"
+                && value
+                    .trim()
+                    .parse::<usize>()
+                    .is_ok_and(|n| n < MIN_SCORING_CAMERAS)
+            {
+                Err("scoring needs at least two cameras".into())
+            } else {
+                change(&config, key, &value)
+            };
+            match checked {
                 Ok(next) => {
                     config = next;
                     break;
@@ -188,7 +198,7 @@ mod tests {
         let mut output = Vec::new();
         let custom = wizard(
             config.clone(),
-            &mut &b"Basement\ninvalid\n0.0.0.0\n0\n5181\n5\n3\n"[..],
+            &mut &b"Basement\ninvalid\n0.0.0.0\n0\n5181\n5\n1\n3\n"[..],
             &mut output,
         )
         .unwrap();
@@ -202,7 +212,7 @@ mod tests {
                 .unwrap()
                 .matches("Invalid value")
                 .count(),
-            3
+            4
         );
         assert!(wizard(config, &mut &b"\n"[..], &mut Vec::new()).is_err());
     }

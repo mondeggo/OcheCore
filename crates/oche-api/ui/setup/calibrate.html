@@ -29,18 +29,14 @@
       <a class="setup-step" href="calibrate.html" data-setup-step="3"><span class="step-number">03</span><strong>Calibrate</strong></a>
       <a class="setup-step" href="test.html" data-setup-step="4"><span class="step-number">04</span><strong>Test</strong></a>
     </nav>
-    <nav class="app-nav" aria-label="Sections">
-      <a href="../index.html">Live</a>
-      <a href="../setup/index.html" aria-current="page">Setup</a>
-      <a href="../debug/index.html">Debug</a>
-    </nav>
+    <a class="btn btn-small btn-ghost setup-exit" href="../settings/index.html" data-exit-setup hidden>Exit setup</a>
     <a class="help-link" href="https://github.com/mondeggo/OcheCore" target="_blank" rel="noreferrer" aria-label="Open the OcheCore documentation">?</a>
   </header>
 
   <main class="page-shell" id="main-content">
     <div class="page-head">
       <h1>Calibrate your <span class="hero-highlight">cameras.</span></h1>
-      <p class="lede" id="calibrate-lede">Click the 20 on each camera, then OcheCore fits the wires.</p>
+      <p class="lede" id="calibrate-lede">OcheCore fits the wires on every camera. Then turn each camera's colours onto the board's numbers.</p>
       <div class="mode-switch" role="radiogroup" aria-labelledby="mode-switch-label">
         <span id="mode-switch-label">Find the 20</span>
         <button type="button" role="radio" aria-checked="true" data-calibration-mode="pick">On screen</button>
@@ -78,15 +74,8 @@
         </li>
       </ol>
 
-      <ol class="mission-strip" id="missions-pick" aria-label="Steps to find the 20 on screen">
+      <ol class="mission-strip is-pair" id="missions-pick" aria-label="Steps to find the 20 on screen">
         <li class="mission is-active">
-          <span class="mission-number" aria-hidden="true"></span>
-          <div>
-            <h3>Click the 20 on each camera</h3>
-            <p>Anywhere inside the 20 segment.</p>
-          </div>
-        </li>
-        <li class="mission">
           <span class="mission-number" aria-hidden="true"></span>
           <div>
             <h3>Empty the board, fit the wires</h3>
@@ -97,9 +86,10 @@
         <li class="mission">
           <span class="mission-number" aria-hidden="true"></span>
           <div>
-            <h3>Check the red is the 20</h3>
-            <p>If not, use the arrows under that camera.</p>
+            <h3>Match the colours</h3>
+            <p>Red on 20, blue on 6, orange on 3, purple on 11. Use the arrows under each camera.</p>
           </div>
+          <button class="btn btn-small btn-primary" type="button" id="save-turns" disabled>Save</button>
         </li>
       </ol>
     </div>

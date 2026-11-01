@@ -214,7 +214,9 @@ def main():
                     click(20, 17)  # Save in the editor.
                     eventually(lambda: cli("status")["config"]["board"]["name"] == "Mouse room")
                     settle_ui()
-                    click(5, 25)  # Detection speed dropdown, in the detection settings below the camera.
+                    # Detection speed is below the visible rows with two cameras: Up
+                    # from the board name wraps to the four detection settings.
+                    os.write(master, b"\x1b[A" * 4 + b"\r")
                     settle_ui()
                     os.write(master, b"\x1b[C\r")
                     eventually(lambda: cli("status")["config"]["detection"]["speed"] == "high")
@@ -222,7 +224,9 @@ def main():
                     os.write(master, b"+")
                     time.sleep(0.1)
                     os.write(master, b"\r")
-                    eventually(lambda: len(cli("status")["config"]["cameras"]) == 2)
+                    eventually(lambda: len(cli("status")["config"]["cameras"]) == 3)
+                    settle_ui()
+                    os.write(master, b"\x1b[H")  # Home: scroll back to the top.
                     settle_ui()
                     click(3, 9)  # First dart, below board settings.
                     settle_ui()

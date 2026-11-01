@@ -289,12 +289,13 @@ async fn execute(args: Args) -> Result<()> {
                 _ => "Cameras are not opened in this mode. Autodarts compatibility is unavailable.",
             }
         );
-        let engine = std::sync::Arc::new(std::sync::Mutex::new(Engine::new(
-            config,
-            store,
-            mode,
-            address.to_string(),
-        )));
+        let mut engine = Engine::new(config, store, mode, address.to_string());
+        // The container image sets this: its port mapping, not the saved
+        // configuration, decides where the board is reachable.
+        if std::env::var_os("OCHECORE_CONTAINER").is_some_and(|value| value == "1") {
+            engine.fix_listener();
+        }
+        let engine = std::sync::Arc::new(std::sync::Mutex::new(engine));
         if log.is_some() {
             let (_, mut events) = engine
                 .lock()
