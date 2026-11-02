@@ -84,8 +84,9 @@ inputs under `dist/amd64` and `dist/arm64`.
 
 ## Installer
 
-`scripts/install.sh` installs the latest GitHub Release (native binary by default,
-or the GHCR image with `--docker`). It cannot work until a release exists: push a
+`scripts/ochecore.sh` installs the latest GitHub Release (native binary by default,
+or the GHCR image with `--docker`) and updates to it later; `scripts/install.sh`
+is kept as a redirect to it. It cannot work until a release exists: push a
 `vX.Y.Z` tag that matches Cargo.toml. After the first image is published, set the
 `ochecore` package's visibility to public on GitHub (Packages settings); otherwise
 `docker pull` needs a login and `--docker` fails for everyone else.

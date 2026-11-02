@@ -55,15 +55,17 @@ not implemented yet. See [the roadmap](oche-core-roadmap.md) and
 On the board computer (Linux, amd64 or arm64):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/mondeggo/ochecore/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mondeggo/ochecore/main/scripts/ochecore.sh | bash
 ```
 
-To run it in Docker instead, add `--docker`:
+To run it in Docker instead:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/mondeggo/ochecore/main/scripts/install.sh | bash -s -- --docker
+curl -fsSL https://raw.githubusercontent.com/mondeggo/ochecore/main/scripts/ochecore.sh | bash -s -- install --docker
 ```
 
+Then manage it with `ochecore.sh start | stop | restart | status | logs | update`.
+Settings and calibration live in `~/.config/ochecore` (Docker: `~/ochecore/data`).
 Options, building from source, and Docker Compose are in
 [Installation](docs/installation.md).
 
