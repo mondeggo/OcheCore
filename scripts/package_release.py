@@ -27,7 +27,7 @@ def main():
     files = {"oche-core": args.binary, "THIRD_PARTY_NOTICES.txt": args.notices,
              "LICENSE": Path("LICENSE"), "NOTICE": Path("NOTICE"),
              "README.md": Path("README.md"), "AGENTS.md": Path("AGENTS.md"),
-             "oche-core-roadmap.md": Path("oche-core-roadmap.md"), "compose.yaml": Path("compose.yaml")}
+             "compose.yaml": Path("compose.yaml")}
     files.update({str(path): path for path in sorted(Path("docs").rglob("*"))
                   if path.is_file() and path.suffix in {".md", ".svg"}})
     with archive.open("wb") as raw, gzip.GzipFile(filename="", fileobj=raw, mode="wb", mtime=epoch) as compressed:

@@ -29,7 +29,7 @@
   <a href="#first-run">First run</a> ·
   <a href="#documentation">Documentation</a> ·
   <a href="docs/native-api.md">Native API</a> ·
-  <a href="oche-core-roadmap.md">Roadmap</a>
+  <a href="docs/roadmap.md">Roadmap</a>
 </p>
 
 <br>
@@ -47,7 +47,7 @@ fusion, a board-state indicator, diagnostics, and an explicit synthetic demo mod
 **Not verified:** scoring accuracy with real throws. The detection and
 calibration methods are tested on synthetic images and a few recordings only;
 there are no published accuracy numbers. The Autodarts compatibility adapter is
-not implemented yet. See [the roadmap](oche-core-roadmap.md) and
+not implemented yet. See [the roadmap](docs/roadmap.md) and
 [discovery notes](docs/discovery.md).
 
 ## Install
@@ -99,10 +99,9 @@ Options, building from source, and Docker Compose are in
 | LAN access and security | [Networking and security](docs/networking.md) |
 | Native HTTP API and events | [Native API](docs/native-api.md) |
 | Design decisions and boundaries | [Architecture](docs/architecture.md) |
-| Detection methods (proposed) | [Detection algorithms](docs/detection-algorithms.md) |
 | Open questions and evidence | [Discovery](docs/discovery.md) |
 | Build, test, release | [Development](docs/development.md), [Releases](docs/releases.md) |
-| Plan | [Roadmap](oche-core-roadmap.md) |
+| Plan | [Roadmap](docs/roadmap.md) |
 
 ## License
 

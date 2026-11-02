@@ -1,6 +1,6 @@
 # M0 discovery and implementation inputs
 
-This checklist turns the [roadmap](../oche-core-roadmap.md) into collectable
+This checklist turns the [roadmap](roadmap.md) into collectable
 inputs. An empty item means unknown, not unsupported. Record dates, software
 versions, and the source of evidence when filling it in.
 
@@ -275,8 +275,10 @@ part of the wall around it, is still watched.
 Resolve these from the collected evidence and operator priorities:
 
 - [ ] Exact compatibility profile and clients required for the first release.
-- [ ] One-camera acceptance/abstention policy.
-- [ ] Initial manual calibration workflow and acceptable setup effort.
+- [x] One-camera acceptance/abstention policy: scoring needs at least two
+  calibrated cameras, and setup asks for two to four (2026-11-02).
+- [x] Initial calibration workflow: the wire grid is fitted automatically; the 20
+  comes from one dart at D20 or from turning colours on screen (browser UI).
 - [ ] Numerical calibration, accuracy, coverage, CPU/RAM, and latency budgets per
   camera count, with a defined measurement method.
 

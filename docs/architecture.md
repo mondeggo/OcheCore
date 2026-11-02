@@ -171,6 +171,15 @@ effect until capture/vision exists. No Autodarts adapter is advertised before
 observed contracts and unchanged-client tests exist. These limits are visible
 in both the UI and API.
 
+- **Detection alternatives not chosen:** an adaptive background model (OpenCV's
+  MOG2 or KNN) could replace plain frame differences under changing light, but it
+  must not absorb a stationary dart into the background and so imply a removal;
+  a learned tip/keypoint model in the style of
+  [DeepDarts](https://arxiv.org/abs/2105.09880) could help one camera or hard
+  cases, but needs labelled images from these cameras, geometric validation and
+  an offline, licence-reviewed model. Neither is implemented; both would be
+  measured on the replay corpus against the current method first.
+
 ## Oche terminal integration reference
 
 Inspection of Oche's published `main` branch on 2026-10-29 shows that its

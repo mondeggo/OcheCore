@@ -33,6 +33,6 @@ Crates: `oche-domain` (types and board geometry), `oche-capture` (V4L2),
 `oche-calibration`, `oche-vision`, `oche-engine` (state, storage, live pipeline),
 `oche-api` (native HTTP API and browser UI), `oche-cli` (CLI and TUI), and `oche-replay`
 (offline analysis of recordings). See the
-[roadmap](../oche-core-roadmap.md), [deferred discovery](discovery.md),
+[roadmap](roadmap.md), [deferred discovery](discovery.md),
 [engineering decisions](architecture.md), and [AGENTS.md](../AGENTS.md).
 Use Conventional Commits, such as `feat(cli): add board controls`.

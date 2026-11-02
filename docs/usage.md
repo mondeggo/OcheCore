@@ -240,9 +240,9 @@ Edits check the state revision to detect concurrent changes. Keyboard input stay
 responsive during network failures. Stale data is labeled disconnected and
 controls are disabled until connectivity returns.
 
-Detection options and their calibration requirements are described in
-[the detection proposal](detection-algorithms.md). Which of them is active,
-and how well it works on real throws, is not yet established.
+How detection and calibration work is described in
+[architecture](architecture.md); how well they work on real throws is not yet
+established (see [discovery](discovery.md)).
 
 ## Try a visit without cameras
 

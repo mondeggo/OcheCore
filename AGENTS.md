@@ -3,8 +3,8 @@
 ## Scope and source of truth
 
 These instructions apply throughout this repository. Read
-`oche-core-roadmap.md` before implementation and `docs/discovery.md` for open
-inputs and evidence. The roadmap is a proposed specification, not proof of
+`docs/roadmap.md` before implementation and `docs/discovery.md` for open
+inputs and evidence. The roadmap is the remaining plan, not proof of
 implemented behavior. Keep documentation explicit about what is planned,
 implemented, and verified.
 
@@ -14,10 +14,10 @@ and player management belong to consuming applications.
 
 ## Implementation order
 
-- Prioritize M0 discovery and the M1 service/compatibility scaffold before advanced
-  detection. Independent native service work can proceed while hardware evidence
-  is being collected.
-- Follow the workspace boundaries in the roadmap. Introduce crates when they have
+- Prioritize the remaining discovery and the Autodarts compatibility contract
+  (see `docs/roadmap.md`). Detection changes must be measured on the replay
+  corpus before and after; native service work can proceed meanwhile.
+- Follow the workspace boundaries in `docs/architecture.md`. Introduce crates when they have
   a concrete responsibility; avoid empty placeholder implementations.
 - Record significant toolchain, dependency, protocol, and geometry decisions with
   their evidence. Do not invent API payloads, compatibility results, hardware
@@ -47,8 +47,9 @@ and player management belong to consuming applications.
 ## Development and verification
 
 The control workspace, CLI, TUI, and the browser UI embedded in `oche-api` are
-implemented. Capture, calibration, vision, and Autodarts compatibility remain
-deferred. Keep the pinned toolchain and
+implemented, as are capture, calibration and detection (verified on recordings,
+not yet against independent accuracy measurements). The Autodarts compatibility
+adapter remains to be built. Keep the pinned toolchain and
 `Cargo.lock` current, and document native build prerequisites. Hardware recordings
 are not required for work on native controls or terminal interfaces.
 
@@ -83,6 +84,8 @@ suite is unnecessary. Report skipped checks and missing prerequisites honestly.
 - Keep each commit focused. Include relevant verification in the commit body or
   review description. Never include unrelated changes, credentials, machine-local
   configuration, or raw recordings.
+- Never add `Co-Authored-By` or any other agent or AI attribution to commits,
+  merges, tags, release notes, or pull request descriptions.
 - Use the `codex/` prefix when creating agent branches unless directed otherwise.
 - Verify that the Git root is this directory before staging or committing; this
   checkout is nested under another repository. Stage explicit paths.
