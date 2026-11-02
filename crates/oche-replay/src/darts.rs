@@ -22,6 +22,7 @@ pub fn analyse(
     cameras: &[CameraRecording],
     calibration: &BTreeMap<u8, Homography>,
     analysis_hz: u32,
+    settings: Settings,
 ) -> Result<Vec<Event>> {
     let period = 1.0 / f64::from(analysis_hz.max(1));
     let mut schedule = Vec::new();
@@ -49,7 +50,7 @@ pub fn analyse(
             (c.camera, mapper)
         })
         .collect();
-    let mut detector = Detector::new(mappers, Settings::default()).keep_detail();
+    let mut detector = Detector::new(mappers, settings).keep_detail();
     let mut events = Vec::new();
     for (timestamp, c, i) in schedule {
         let camera = &cameras[c];

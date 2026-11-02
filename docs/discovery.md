@@ -241,6 +241,24 @@ the 18 recorded darts of `visit2-heldout` still match all their labels (12/12,
 one camera sees only 1-2 px wide, until the thin-line removal was limited to
 the neighbourhood of old darts.
 
+Watched radius (2026-11-02). Movement beside the board could keep the scene from
+settling or be taken as the new dart, giving `?` throws, because the detector
+compared whole frames. Each camera's frames are now blanked outside a radius
+around the bull on the board plane, through its calibration, before anything
+else (`Settings::watch_radius_mm`). Flights stand off the board and project onto
+the plane well outside it, so the radius was chosen by replaying all four
+sessions above at 10 Hz against the unmasked detector, event by event: at 200,
+250, 300 and 350 mm some arrivals changed (visit3 got a wrong T19 at 200 and
+300 mm; visit2 changed 13 events at 200 mm), while 400, 450 and 500 mm left every
+event of all four sessions identical (65 arrivals; visit3 and visit4 22/22 of
+their results). The default is 450 mm. These recordings contain no movement
+beside the board, so they show the mask costs nothing on them, not how well it
+removes such movement; a synthetic test covers that. Anything moving within
+450 mm of the bull on the board plane, which includes the board's surround and
+part of the wall around it, is still watched.
+
+- [ ] Record movement beside the board (people passing, a hand on the wall) to
+  measure the watched radius on real disturbances.
 - [ ] Confirm the measured radii with a ruler (treble inner wire diameter
   about 192.8 mm on this board).
 - [ ] Record more held-out labelled sessions, including grouped darts and

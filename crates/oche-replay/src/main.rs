@@ -113,6 +113,10 @@ enum Command {
         /// Write uncompressed overlay PNGs for each arrival (about 2.6 MB each).
         #[arg(long)]
         overlays: bool,
+        /// Watched radius around the board in mm (0: the whole frame); the
+        /// detector's default when omitted.
+        #[arg(long)]
+        watch_radius_mm: Option<f64>,
     },
     /// Time JPEG decoding and luma conversion on recorded frames.
     Bench {
@@ -302,6 +306,7 @@ fn main() -> Result<()> {
             out,
             hz,
             overlays,
+            watch_radius_mm,
         } => {
             fs::create_dir_all(&out)?;
             let report: serde_json::Value = serde_json::from_slice(&fs::read(&calibration)?)?;
@@ -319,7 +324,11 @@ fn main() -> Result<()> {
             }
             let cameras = open_session(&session)?;
             let origin = cameras[0].frames[0].timestamp;
-            let events = darts::analyse(&cameras, &homographies, hz)?;
+            let mut settings = oche_vision::live::Settings::default();
+            if let Some(radius) = watch_radius_mm {
+                settings.watch_radius_mm = radius;
+            }
+            let events = darts::analyse(&cameras, &homographies, hz, settings)?;
             for (n, event) in events.iter().enumerate() {
                 match event {
                     Event::Baseline { timestamp } => {

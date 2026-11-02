@@ -24,10 +24,20 @@ use crate::{Abstention, FusionLimits, Impact, LineObservation, fuse_lines};
 /// Maps an image line through two pixels onto the board plane.
 pub trait LineMapper: Send {
     fn line_to_board(&self, a: (f64, f64), b: (f64, f64)) -> Option<BoardLine>;
+    /// The board-plane point (mm) a pixel looks at, or `None` when its ray
+    /// does not meet the board plane in front of the camera.
+    fn pixel_to_board(&self, pixel: (f64, f64)) -> Option<(f64, f64)>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Settings {
+    /// Only pixels whose board-plane point lies within this radius (mm) are
+    /// watched; the rest of each frame is blanked before anything else, so
+    /// people and things moving beside the board neither keep the scene from
+    /// settling nor become the "dart". A dart's flight stands off the board and
+    /// projects onto the plane outside the board, so this is wider than the
+    /// board. 0 watches the whole frame, as does a camera without a mapping.
+    pub watch_radius_mm: f64,
     pub motion_factor: usize,
     pub motion_threshold: u8,
     /// Changed fraction of the downsampled frame below which a camera is still.
@@ -93,9 +103,13 @@ pub struct Settings {
     pub disturbance_fraction: f64,
 }
 
+/// Default for [`Settings::watch_radius_mm`].
+pub const WATCH_RADIUS_MM: f64 = 450.0;
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            watch_radius_mm: WATCH_RADIUS_MM,
             motion_factor: 4,
             motion_threshold: 15,
             still_fraction: 0.0005,
@@ -197,6 +211,8 @@ pub enum Event {
 struct Camera {
     slot: u8,
     mapper: Option<Box<dyn LineMapper>>,
+    /// Watched pixels for frames of this size, from the mapper.
+    watched: Option<(usize, usize, Vec<bool>)>,
     previous_small: Option<GrayImage>,
     still_since: Option<f64>,
     latest: f64,
@@ -216,6 +232,34 @@ pub struct Detector {
     keep_detail: bool,
 }
 
+impl Camera {
+    /// Sets pixels outside the watched radius to black, the same in every frame,
+    /// so they never change.
+    fn blank_unwatched(&mut self, luma: &mut GrayImage, radius_mm: f64) {
+        let Some(mapper) = self.mapper.as_ref().filter(|_| radius_mm > 0.0) else {
+            return;
+        };
+        let (width, height) = (luma.width, luma.height);
+        if !matches!(&self.watched, Some((w, h, _)) if *w == width && *h == height) {
+            let watched = (0..width * height)
+                .map(|i| {
+                    mapper
+                        .pixel_to_board(((i % width) as f64, (i / width) as f64))
+                        .is_some_and(|(x, y)| x.hypot(y) <= radius_mm)
+                })
+                .collect();
+            self.watched = Some((width, height, watched));
+        }
+        if let Some((_, _, watched)) = &self.watched {
+            for (pixel, watched) in luma.data.iter_mut().zip(watched) {
+                if !watched {
+                    *pixel = 0;
+                }
+            }
+        }
+    }
+}
+
 impl Detector {
     /// One entry per camera slot; a camera without a mapper still contributes
     /// to stillness and occupancy but not to impact estimation.
@@ -227,6 +271,7 @@ impl Detector {
                 .map(|(slot, mapper)| Camera {
                     slot,
                     mapper,
+                    watched: None,
                     previous_small: None,
                     still_since: None,
                     latest: f64::NEG_INFINITY,
@@ -283,13 +328,14 @@ impl Detector {
         }
     }
 
-    pub fn push(&mut self, slot: u8, timestamp: f64, luma: GrayImage) -> Option<Event> {
+    pub fn push(&mut self, slot: u8, timestamp: f64, mut luma: GrayImage) -> Option<Event> {
         let settings = self.settings;
         let camera = self.cameras.iter_mut().find(|c| c.slot == slot)?;
         if timestamp <= camera.latest {
             return None;
         }
         camera.latest = timestamp;
+        camera.blank_unwatched(&mut luma, settings.watch_radius_mm);
         let small = luma.downsample(settings.motion_factor);
         let still = camera.previous_small.as_ref().is_some_and(|previous| {
             previous.width == small.width
@@ -845,6 +891,10 @@ mod tests {
                 BoardPoint::new(b.0 - 100.0, 100.0 - b.1),
             )
         }
+
+        fn pixel_to_board(&self, pixel: (f64, f64)) -> Option<(f64, f64)> {
+            Some((pixel.0 - 100.0, 100.0 - pixel.1))
+        }
     }
 
     type Segment = ((f64, f64), (f64, f64));
@@ -908,6 +958,58 @@ mod tests {
                 image.data[y * image.width + x] = if stripe { 20 } else { 235 };
             }
         }
+    }
+
+    #[test]
+    fn movement_beside_the_board_is_not_watched() {
+        // Someone moving in a corner of both views (board radius over 110 mm)
+        // the whole time, while a dart lands at the bull (its flight within
+        // 85 mm).
+        let corner = |image: &mut GrayImage| {
+            for y in 180..198 {
+                for x in 180..198 {
+                    image.data[y * image.width + x] = 240;
+                }
+            }
+        };
+        let scenes = [
+            (frame(&[]), frame(&[])),
+            (
+                flighted_frame((100.0, 100.0), (140.0, 60.0)),
+                flighted_frame((100.0, 100.0), (60.0, 60.0)),
+            ),
+        ];
+        let run = |radius_mm: f64| -> Vec<Event> {
+            let mut detector = Detector::new(
+                vec![(1, Some(Box::new(Offset))), (2, Some(Box::new(Offset)))],
+                Settings {
+                    watch_radius_mm: radius_mm,
+                    ..Settings::default()
+                },
+            );
+            let (mut t, mut events) = (0.0, Vec::new());
+            for (one, two) in &scenes {
+                for step in 0..30 {
+                    for (slot, image) in [(1, one), (2, two)] {
+                        let mut image = image.clone();
+                        if step % 2 == 0 {
+                            corner(&mut image);
+                        }
+                        events.extend(detector.push(slot, t, image));
+                    }
+                    t += 0.1;
+                }
+            }
+            events
+        };
+        let watched = run(90.0);
+        let [Event::Baseline { .. }, Event::Arrival { impact, .. }] = watched.as_slice() else {
+            panic!("expected a baseline and an arrival, got {}", watched.len());
+        };
+        let point = impact.as_ref().expect("two lines through the bull").point;
+        assert!(point.radius() < 3.0, "{point:?}");
+        // Watching the whole frame, the movement keeps the scene from settling.
+        assert!(run(0.0).is_empty());
     }
 
     #[test]

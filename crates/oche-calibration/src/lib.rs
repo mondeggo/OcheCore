@@ -67,6 +67,11 @@ impl oche_vision::live::LineMapper for Homography {
     fn line_to_board(&self, a: (f64, f64), b: (f64, f64)) -> Option<BoardLine> {
         Homography::line_to_board(self, Pixel::new(a.0, a.1), Pixel::new(b.0, b.1))
     }
+
+    fn pixel_to_board(&self, pixel: (f64, f64)) -> Option<(f64, f64)> {
+        self.to_board_facing(Pixel::new(pixel.0, pixel.1))
+            .map(|point| (point.x, point.y))
+    }
 }
 
 /// Board-plane residuals between mapped image points and their reference points.
@@ -177,6 +182,17 @@ impl Homography {
 
     pub fn to_board(&self, pixel: Pixel) -> Option<BoardPoint> {
         dehomogenize(apply(&self.to_board, pixel.x, pixel.y)).map(|(x, y)| BoardPoint::new(x, y))
+    }
+
+    /// Like [`Self::to_board`], but only for pixels whose ray meets the board
+    /// plane on the board's side of the camera. Pixels beyond the plane's
+    /// horizon have no board point; plain dehomogenization would still give one.
+    pub fn to_board_facing(&self, pixel: Pixel) -> Option<BoardPoint> {
+        let (_, _, w) = apply(&self.to_board, pixel.x, pixel.y);
+        // The board centre's own pixel sets which sign is in front.
+        let (cx, cy, cw) = apply(&self.to_image, 0.0, 0.0);
+        let (_, _, centre_w) = apply(&self.to_board, cx / cw, cy / cw);
+        (w * centre_w > 0.0).then(|| self.to_board(pixel)).flatten()
     }
 
     pub fn to_image(&self, point: BoardPoint) -> Option<Pixel> {
@@ -345,6 +361,21 @@ fn symmetric_eigen<const N: usize>(mut a: [[f64; N]; N]) -> ([f64; N], [[f64; N]
 mod tests {
     use super::*;
     use oche_domain::board::BoardDimensions;
+
+    #[test]
+    fn pixels_beyond_the_board_planes_horizon_have_no_board_point() {
+        // A tilted view: the plane's horizon is the image row y = -1000.
+        let h =
+            Homography::from_matrix([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.001, 1.0]]).unwrap();
+        let near = h.to_board_facing(Pixel::new(10.0, 20.0)).unwrap();
+        assert!((near.x - 10.0 / 1.02).abs() < 1e-9 && (near.y - 20.0 / 1.02).abs() < 1e-9);
+        let beyond = Pixel::new(0.0, -2000.0);
+        assert!(
+            h.to_board(beyond).is_some(),
+            "plain mapping still gives a point"
+        );
+        assert!(h.to_board_facing(beyond).is_none());
+    }
 
     /// A plausible oblique camera: board → image.
     const CAMERA: Matrix3 = [
