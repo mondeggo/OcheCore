@@ -363,6 +363,7 @@ mod tests {
             Command::Start,
             Command::DemoThrow {
                 label: "T20".into(),
+                position: None,
             },
             Command::DemoTakeout { remaining: 0 },
         ] {

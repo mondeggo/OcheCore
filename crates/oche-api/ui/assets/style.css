@@ -1119,12 +1119,6 @@ select {
   position: relative;
   flex: 1;
   min-height: 16rem;
-  border: 1.5px solid var(--ink);
-  border-radius: var(--radius);
-  background:
-    radial-gradient(circle at 50% 50%, rgba(221, 245, 111, 0.28), transparent 62%),
-    var(--paper);
-  box-shadow: var(--shadow);
 }
 
 .board-stage > svg {
@@ -1347,8 +1341,10 @@ select {
   flex: 1;
   min-height: 0;
   margin: 0;
-  padding: 0;
+  /* Room for the scrollbar, so it never covers the values. */
+  padding: 0 0.7rem 0 0;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   font-size: 0.72rem;
   list-style: none;
 }
@@ -1737,4 +1733,101 @@ input:disabled {
 .view-switch button[aria-checked="true"] {
   color: var(--lime);
   background: var(--ink);
+}
+
+/* Darts in the strip are buttons: click one, then where it really is. */
+button.dart-slot {
+  font: inherit;
+  font-family: var(--display);
+  cursor: pointer;
+}
+
+button.dart-slot:hover {
+  background: var(--lime);
+}
+
+.dart-slot.is-correcting {
+  outline: 3px solid var(--coral);
+  outline-offset: 2px;
+  background: var(--lime);
+}
+
+.board-stage > svg.is-correcting {
+  cursor: crosshair;
+}
+
+.view-switch button:disabled {
+  color: var(--ink-soft);
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* Settings fit one screen: slightly tighter panels than elsewhere. */
+.page-body.settings-layout,
+.settings-column {
+  gap: 0.8rem;
+}
+
+.settings-layout .panel {
+  padding: 0.9rem 1rem;
+}
+
+.settings-layout .panel-header {
+  margin-bottom: 0.4rem;
+}
+
+.settings-layout .settings-row {
+  margin-top: 0.7rem;
+}
+
+/* Debug: camera pictures in the Visit panel. */
+.view-switch.is-inline {
+  position: static;
+  margin-left: auto;
+}
+
+.debug-cameras {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.debug-cameras-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.debug-camera-grid {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  gap: 0.5rem;
+  overflow-y: auto;
+}
+
+.debug-camera {
+  margin: 0;
+  overflow: hidden;
+  border: 1.5px solid var(--ink);
+  border-radius: 0.8rem;
+}
+
+.debug-camera .camera-preview {
+  flex: none;
+  min-height: 0;
+  aspect-ratio: 16 / 9;
+  border-top: 0;
+}
+
+.debug-camera figcaption {
+  padding: 0.25rem 0.5rem;
+  border-top: 1.5px solid var(--ink);
+  font-size: 0.72rem;
+  font-weight: 800;
 }

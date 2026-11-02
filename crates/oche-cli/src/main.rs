@@ -378,6 +378,7 @@ async fn execute(args: Args) -> Result<()> {
                         label,
                         expected_revision: snapshot.revision,
                         expected_session_id: snapshot.session_id,
+                        position: None,
                     })
                     .await?,
                 args.json,
@@ -413,7 +414,10 @@ async fn execute(args: Args) -> Result<()> {
         }
         Some(Action::Demo { action }) => {
             let command = match action {
-                DemoAction::Throw { label } => Command::DemoThrow { label },
+                DemoAction::Throw { label } => Command::DemoThrow {
+                    label,
+                    position: None,
+                },
                 DemoAction::Takeout { remaining } => Command::DemoTakeout { remaining },
             };
             show(&client.command(&command).await?, args.json)?;

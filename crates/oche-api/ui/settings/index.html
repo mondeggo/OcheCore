@@ -40,8 +40,8 @@
             <button class="btn btn-small btn-primary" type="submit">Save</button>
           </div>
           <div class="field">
-            <label for="board-name">Name</label>
-            <input id="board-name" name="board-name" type="text" autocomplete="off" maxlength="80">
+            <label class="sr-only" for="board-name">Board name</label>
+            <input id="board-name" name="board-name" type="text" autocomplete="off" maxlength="80" placeholder="Board name">
           </div>
         </form>
 
@@ -60,13 +60,38 @@
               <input id="host-port" name="host-port" type="text" inputmode="numeric" autocomplete="off" maxlength="5">
             </div>
           </div>
-          <p class="hint settings-row" id="listen-note">127.0.0.1 keeps it on this computer; 0.0.0.0 serves it on every network. Saved addresses apply after OcheCore restarts.</p>
+          <p class="hint settings-row" id="listen-note">127.0.0.1: this computer only; 0.0.0.0: every network. Applies after a restart.</p>
         </form>
 
         <section class="panel" aria-labelledby="setup-title">
-          <h2 id="setup-title">Setup</h2>
-          <p class="hint">Go through the board, cameras, calibration and a test throw again. Each step keeps your current settings until you change them.</p>
-          <a class="btn btn-small btn-lime settings-row" href="../setup/index.html">Run setup again</a>
+          <div class="panel-header">
+            <h2 id="setup-title">Setup</h2>
+            <a class="btn btn-small btn-lime" href="../setup/index.html">Run setup again</a>
+          </div>
+          <p class="hint">Board, cameras, calibration and a test throw again; your settings stay until you change them.</p>
+        </section>
+
+        <section class="panel" aria-labelledby="debugging-title">
+          <h2 id="debugging-title">Diagnostics</h2>
+          <div class="field-row settings-row">
+            <div class="field">
+              <label for="debug-save-corrections">Save corrected darts</label>
+              <select id="debug-save-corrections">
+                <option value="false">Off</option>
+                <option value="true">On</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="debug-keep-corrections">Keep</label>
+              <select id="debug-keep-corrections">
+                <option value="50">Newest 50</option>
+                <option value="100">Newest 100</option>
+                <option value="200">Newest 200</option>
+                <option value="0">All (keeps growing)</option>
+              </select>
+            </div>
+          </div>
+          <p class="hint settings-row">Each dart you correct is saved with the cameras' pictures, the detector's view and the true position in <code>debug/</code> beside the configuration (<code>/data/ochecore/debug</code> in Docker), about 1 MB each.</p>
         </section>
       </div>
 
@@ -104,6 +129,18 @@
             </div>
           </div>
           <p class="hint settings-row">Resolution and frame rate apply to every camera. Each change is saved at once.</p>
+        </section>
+
+        <section class="panel" aria-labelledby="backup-title">
+          <div class="panel-header">
+            <h2 id="backup-title">Backup</h2>
+            <div class="settings-actions">
+              <button class="btn btn-small" type="button" id="export-settings">Export</button>
+              <label class="btn btn-small btn-ghost" for="import-settings">Import…</label>
+              <input class="sr-only" type="file" id="import-settings" accept="application/json,.json">
+            </div>
+          </div>
+          <p class="hint">Settings as JSON, as <code>oche-core config export --json</code>. Import keeps the board's identity, calibration and, in Docker, its address.</p>
         </section>
       </div>
     </div>

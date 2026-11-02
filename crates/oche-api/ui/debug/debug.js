@@ -4,29 +4,85 @@
    log and the daemon's saved configuration. Loaded after assets/app.js,
    whose helpers it uses. Each [data-command] button sends that command. */
 
-/* The configuration as the keys `PUT /api/v1/config` accepts. */
-function configEntries(config) {
-  const entries = [
-    ["board.id", config.board.id],
-    ["board.name", config.board.name],
-    ["server.bind", config.server.bind],
-    ["server.port", config.server.port],
-    ["detection.speed", config.detection.speed],
-    ["detection.standby_seconds", config.detection.standby_seconds],
-    ["cameras.count", config.cameras.length]
-  ];
-  config.cameras.forEach(camera => {
-    const prefix = `cameras.${camera.slot}`;
-    entries.push(
-      [`${prefix}.device`, camera.device],
-      [`${prefix}.resolution`, `${camera.width}x${camera.height}`],
-      [`${prefix}.fps`, camera.fps],
-      [`${prefix}.rotation`, camera.rotation],
-      [`${prefix}.exposure`, camera.exposure ?? "auto"],
-      [`${prefix}.hint`, camera.hint ? camera.hint.join(",") : ""]
-    );
-  });
-  return entries;
+/* Events worth a new picture from every camera: a dart, a takeout, the board
+   becoming ready, a new calibration. Pictures are not streamed otherwise. */
+const PICTURE_EVENTS = new Set([
+  "throw_accepted",
+  "throw_uncertain",
+  "arrival_ignored",
+  "partial_takeout",
+  "takeout_completed",
+  "board_ready",
+  "calibration_updated"
+]);
+
+/* Still pictures from each camera, retaken on PICTURE_EVENTS and by hand. */
+function initDebugPictures() {
+  const board = document.getElementById("visit-board");
+  const pictures = document.getElementById("visit-cameras");
+  const grid = document.getElementById("debug-camera-grid");
+  const caption = document.getElementById("pictures-caption");
+  const switches = [...document.querySelectorAll("[data-visit-view]")];
+  const previews = new Map();
+  let view = storage.get("debug-visit-view", "board");
+  let lastEvent = null;
+  let layoutKey = "";
+
+  function show(next) {
+    view = next;
+    storage.set("debug-visit-view", view);
+    switches.forEach(button => button.setAttribute("aria-checked", String(button.dataset.visitView === view)));
+    board.hidden = view !== "board";
+    pictures.hidden = view !== "cameras";
+  }
+
+  function retake(why) {
+    previews.forEach((_, slot) => cameraFeed.retake(slot));
+    caption.textContent = `${why} · ${new Date().toLocaleTimeString()}`;
+  }
+
+  function render({ snapshot, events }) {
+    const key = JSON.stringify(snapshot.config.cameras);
+    if (key !== layoutKey) {
+      layoutKey = key;
+      grid.replaceChildren();
+      [...previews.keys()].forEach(slot => cameraFeed.forget(slot));
+      previews.clear();
+      snapshot.config.cameras.forEach(camera => {
+        const preview = createCameraPreview(camera.slot, true);
+        const figure = document.createElement("figure");
+        figure.className = "debug-camera";
+        const label = document.createElement("figcaption");
+        label.textContent = `Camera ${camera.slot}`;
+        figure.append(preview.element, label);
+        grid.append(figure);
+        preview.layout(camera);
+        previews.set(camera.slot, preview);
+        cameraFeed.watch(preview);
+        cameraFeed.fetch(camera.slot);
+      });
+    }
+    snapshot.config.cameras.forEach(camera => {
+      const preview = previews.get(camera.slot);
+      const [problem, start] = previewProblem(snapshot, camera);
+      preview.say(problem, start);
+      preview.label.textContent = `${camera.height}p · ${camera.rotation}°`;
+    });
+    /* New pictures for the newest important event since the last look. */
+    const latest = [...events].reverse().find(event => PICTURE_EVENTS.has(event.kind));
+    const id = latest ? `${latest.session_id}:${latest.sequence}` : "none";
+    /* Events from before this page opened are already in the first pictures. */
+    if (lastEvent !== null && id !== lastEvent && latest) {
+      retake(`After ${latest.kind.replace(/_/g, " ")} #${latest.sequence}`);
+    }
+    lastEvent = id;
+  }
+
+  switches.forEach(button => button.addEventListener("click", () => show(button.dataset.visitView)));
+  document.getElementById("take-pictures").addEventListener("click", () => retake("Taken by hand"));
+  show(view);
+  daemon.subscribe(render);
+  caption.textContent = "Latest pictures. They change after a dart or a takeout, or with Take pictures.";
 }
 
 /* A short summary of what an event changed. */
@@ -46,6 +102,7 @@ function initDebugPage() {
   let configKey = "";
 
   whenReady(() => {
+    initDebugPictures();
     const view = createPlayView(true);
     bindDemoThrows(view);
     daemon.subscribe(({ snapshot, events }) => {

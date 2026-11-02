@@ -1,6 +1,9 @@
 //! Serialized control state, independent of camera capture and HTTP transports.
+pub mod corrections;
 pub mod live;
 pub mod storage;
+
+pub use corrections::ArrivalEvidence;
 
 use oche_domain::*;
 use std::{
@@ -20,6 +23,9 @@ pub struct Engine {
     scene: SceneState,
     mode: Mode,
     throws: Vec<Throw>,
+    /// What the cameras saw for each throw, for correction entries; kept
+    /// alongside `throws`, in memory only.
+    evidence: Vec<Option<ArrivalEvidence>>,
     physical_darts: Option<u8>,
     revision: u64,
     sequence: u64,
@@ -46,6 +52,17 @@ pub enum Observation {
     Removal { empty: bool },
     /// A large change that is not darts (lighting, a moved camera).
     Disturbance,
+}
+
+/// A dart position from a client: finite, on or near the board.
+fn check_position(position: Option<[f64; 2]>) -> Result<(), ApiError> {
+    if position.is_some_and(|[x, y]| !(x.is_finite() && y.is_finite() && x.hypot(y) <= 500.0)) {
+        return Err(error(
+            "invalid_request",
+            "position must be x,y in mm within 500 mm of the bull",
+        ));
+    }
+    Ok(())
 }
 
 pub fn error(code: &str, message: impl Into<String>) -> ApiError {
@@ -75,6 +92,7 @@ impl Engine {
             },
             mode,
             throws: Vec::new(),
+            evidence: Vec::new(),
             physical_darts: (mode == Mode::Demo).then_some(0),
             revision: 0,
             sequence: 0,
@@ -204,7 +222,7 @@ impl Engine {
                 "stopped"
             }
             Command::Reset => {
-                self.throws.clear();
+                self.clear_throws();
                 "visit_reset"
             }
             Command::Calibrate { .. } | Command::OrientBegin | Command::OrientFinish => {
@@ -224,7 +242,9 @@ impl Engine {
                 label,
                 expected_revision,
                 expected_session_id,
+                position,
             } => {
+                check_position(position)?;
                 if expected_revision != self.revision || expected_session_id != self.session_id {
                     return Err(error(
                         "conflict",
@@ -244,11 +264,17 @@ impl Engine {
                     Throw::synthetic(&label).map_err(|e| error("invalid_request", e))?;
                 corrected.synthetic = current.synthetic;
                 corrected.corrected = true;
-                self.throws[index] = corrected;
+                // A new label without a position no longer matches the old one.
+                corrected.position = position;
+                let detected = std::mem::replace(&mut self.throws[index], corrected);
+                if self.config.debug.save_corrections {
+                    self.save_correction(dart, &detected, index);
+                }
                 "throw_corrected"
             }
-            Command::DemoThrow { label } => {
+            Command::DemoThrow { label, position } => {
                 self.require_demo()?;
+                check_position(position)?;
                 if self.state != ServiceState::Running {
                     return Err(error(
                         "conflict",
@@ -258,14 +284,16 @@ impl Engine {
                 if self.throws.len() >= 3 || self.physical_darts.unwrap_or(0) >= 3 {
                     return Err(error(
                         "conflict",
-                        "three darts are already present; complete takeout before another throw",
+                        "three darts are still on the board (a visit reset keeps them); take them out first",
                     ));
                 }
                 if self.scene == SceneState::PartialTakeout {
                     return Err(error("conflict", "complete the partial takeout first"));
                 }
-                let dart = Throw::synthetic(&label).map_err(|e| error("invalid_request", e))?;
+                let mut dart = Throw::synthetic(&label).map_err(|e| error("invalid_request", e))?;
+                dart.position = position;
                 self.throws.push(dart);
+                self.evidence.push(None);
                 self.physical_darts = Some(self.physical_darts.unwrap_or(0) + 1);
                 self.scene = SceneState::DartsPresent;
                 "throw_accepted"
@@ -286,7 +314,7 @@ impl Engine {
                 }
                 self.physical_darts = Some(remaining);
                 if remaining == 0 {
-                    self.throws.clear();
+                    self.clear_throws();
                     self.scene = SceneState::Empty;
                     "takeout_completed"
                 } else {
@@ -359,7 +387,7 @@ impl Engine {
             Observation::Uncertain(reason) => self.arrival(None, Some(reason)),
             Observation::Removal { empty: true } => {
                 self.last_activity = Instant::now();
-                self.throws.clear();
+                self.clear_throws();
                 self.physical_darts = Some(0);
                 self.scene = SceneState::Empty;
                 "takeout_completed"
@@ -392,11 +420,52 @@ impl Engine {
             corrected: false,
             uncertain,
             uncertainty: reason,
+            position: None,
         });
+        self.evidence.push(None);
         if uncertain {
             "throw_uncertain"
         } else {
             "throw_accepted"
+        }
+    }
+
+    fn clear_throws(&mut self) {
+        self.throws.clear();
+        self.evidence.clear();
+    }
+
+    /// Attaches what the cameras saw to the throw the last observation
+    /// added, and its detected position. Not an event: the throw's own event
+    /// already went out, and the position only refines how it is drawn.
+    pub fn note_arrival(&mut self, evidence: ArrivalEvidence) {
+        if let (Some(throw), Some(slot)) = (self.throws.last_mut(), self.evidence.last_mut())
+            && slot.is_none()
+        {
+            throw.position = evidence.position;
+            *slot = Some(evidence);
+        }
+    }
+
+    /// The folder for diagnostics, beside the configuration file.
+    pub fn debug_dir(&self) -> std::path::PathBuf {
+        self.store.dir().join("debug")
+    }
+
+    /// A failure to save is reported but never undoes the correction.
+    fn save_correction(&self, dart: u8, detected: &Throw, index: usize) {
+        let snapshot = self.snapshot();
+        let entry = corrections::Correction {
+            snapshot: &snapshot,
+            dart,
+            detected,
+            corrected: &self.throws[index],
+            evidence: self.evidence.get(index).and_then(Option::as_ref),
+        };
+        let keep = self.config.debug.keep_corrections as usize;
+        match corrections::save(&self.debug_dir(), &entry, keep) {
+            Ok(path) => eprintln!("Saved the corrected dart to {}", path.display()),
+            Err(e) => eprintln!("Could not save the corrected dart: {e}"),
         }
     }
 
@@ -490,6 +559,7 @@ mod tests {
         e.command(Command::Start).unwrap();
         e.command(Command::DemoThrow {
             label: "T20".into(),
+            position: None,
         })
         .unwrap();
         let before = e.snapshot();
@@ -498,6 +568,7 @@ mod tests {
             label: "D20".into(),
             expected_revision: before.revision,
             expected_session_id: before.session_id,
+            position: None,
         };
         let after = e.command(command.clone()).unwrap();
         assert_eq!(after.throws[0].score, 40);
@@ -517,7 +588,8 @@ mod tests {
                     dart,
                     label: label.into(),
                     expected_revision: after.revision,
-                    expected_session_id: session
+                    expected_session_id: session,
+                    position: None,
                 })
                 .is_err()
             );
@@ -530,7 +602,85 @@ mod tests {
                 dart: 1,
                 label: "S1".into(),
                 expected_revision: cleared.revision,
-                expected_session_id: cleared.session_id
+                expected_session_id: cleared.session_id,
+                position: None,
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn corrected_darts_are_saved_with_what_the_cameras_saw_when_enabled() {
+        let (dir, mut e) = engine(Mode::Live);
+        e.command(Command::Start).unwrap();
+        e.observe(Observation::Baseline);
+        e.observe(Observation::Arrival(Some(("S1".into(), 1))));
+        e.note_arrival(ArrivalEvidence {
+            position: Some([20.0, 60.0]),
+            detection: "arrival; impact S1".into(),
+            before: vec![(1, b"before".to_vec())],
+            after: vec![(1, b"after".to_vec())],
+        });
+        assert_eq!(e.snapshot().throws[0].position, Some([20.0, 60.0]));
+        let correct = |e: &mut Engine, label: &str, position| {
+            let s = e.snapshot();
+            e.command(Command::CorrectThrow {
+                dart: 1,
+                label: label.into(),
+                expected_revision: s.revision,
+                expected_session_id: s.session_id,
+                position,
+            })
+        };
+        // Off by default: nothing is written.
+        correct(&mut e, "S20", Some([0.0, 60.0])).unwrap();
+        assert!(!e.debug_dir().exists());
+        assert!(correct(&mut e, "S20", Some([f64::NAN, 0.0])).is_err());
+        e.configure(ConfigChange {
+            key: "debug.save_corrections".into(),
+            value: "true".into(),
+            expected_revision: None,
+        })
+        .unwrap();
+        let after = correct(&mut e, "T20", Some([0.0, 103.0])).unwrap();
+        assert_eq!(after.throws[0].position, Some([0.0, 103.0]));
+        let entries: Vec<_> = std::fs::read_dir(dir.path().join("debug"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        let [entry] = entries.as_slice() else {
+            panic!("expected one entry, got {entries:?}");
+        };
+        assert!(entry.to_string_lossy().ends_with("-dart1-S20-to-T20"));
+        assert_eq!(
+            std::fs::read(entry.join("before-cam1.jpg")).unwrap(),
+            b"before"
+        );
+        let json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(entry.join("entry.json")).unwrap()).unwrap();
+        assert_eq!(json["corrected"]["label"], "T20");
+        assert_eq!(json["corrected"]["position_mm"][1], 103.0);
+        assert_eq!(json["detection"], "arrival; impact S1");
+        // A correction without a position drops the detected one.
+        assert_eq!(
+            correct(&mut e, "S5", None).unwrap().throws[0].position,
+            None
+        );
+        for (value, kept) in [("all", 0), ("50", 50)] {
+            let s = e
+                .configure(ConfigChange {
+                    key: "debug.keep_corrections".into(),
+                    value: value.into(),
+                    expected_revision: None,
+                })
+                .unwrap();
+            assert_eq!(s.config.debug.keep_corrections, kept);
+        }
+        assert!(
+            e.configure(ConfigChange {
+                key: "debug.keep_corrections".into(),
+                value: "7".into(),
+                expected_revision: None,
             })
             .is_err()
         );
@@ -543,21 +693,28 @@ mod tests {
         for _ in 0..3 {
             e.command(Command::DemoThrow {
                 label: "T20".into(),
+                position: None,
             })
             .unwrap();
         }
         let revision = e.snapshot().revision;
         assert!(
-            e.command(Command::DemoThrow { label: "DB".into() })
-                .is_err()
+            e.command(Command::DemoThrow {
+                label: "DB".into(),
+                position: None
+            })
+            .is_err()
         );
         assert_eq!(e.snapshot().revision, revision);
         e.command(Command::Reset).unwrap();
         assert_eq!(e.snapshot().physical_darts, Some(3));
         assert!(e.snapshot().throws.is_empty());
         assert!(
-            e.command(Command::DemoThrow { label: "DB".into() })
-                .is_err()
+            e.command(Command::DemoThrow {
+                label: "DB".into(),
+                position: None
+            })
+            .is_err()
         );
         e.command(Command::DemoTakeout { remaining: 1 }).unwrap();
         assert_eq!(e.snapshot().scene, SceneState::PartialTakeout);
@@ -569,8 +726,11 @@ mod tests {
     fn early_takeout_and_event_order_are_explicit() {
         let (_dir, mut e) = engine(Mode::Demo);
         e.command(Command::Start).unwrap();
-        e.command(Command::DemoThrow { label: "S1".into() })
-            .unwrap();
+        e.command(Command::DemoThrow {
+            label: "S1".into(),
+            position: None,
+        })
+        .unwrap();
         e.command(Command::DemoTakeout { remaining: 0 }).unwrap();
         let events = e.history();
         assert_eq!(
@@ -591,7 +751,8 @@ mod tests {
         assert!(e.command(Command::Calibrate { camera: None }).is_err());
         assert!(
             e.command(Command::DemoThrow {
-                label: "T20".into()
+                label: "T20".into(),
+                position: None,
             })
             .is_err()
         );
@@ -683,6 +844,7 @@ mod tests {
         e.command(Command::Start).unwrap();
         e.command(Command::DemoThrow {
             label: "D20".into(),
+            position: None,
         })
         .unwrap();
         for _ in 0..20 {

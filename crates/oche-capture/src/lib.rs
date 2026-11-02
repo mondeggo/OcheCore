@@ -98,6 +98,31 @@ impl Camera {
     pub fn latest_jpeg(&self) -> Option<Vec<u8>> {
         self.shared.latest_jpeg.lock().ok()?.clone()
     }
+
+    /// A handle that reads this camera's latest JPEG from another thread.
+    pub fn frames(&self) -> FrameSource {
+        FrameSource {
+            slot: self.spec.slot,
+            shared: self.shared.clone(),
+        }
+    }
+}
+
+/// Reads a camera's latest JPEG; see [`Camera::frames`].
+#[derive(Clone)]
+pub struct FrameSource {
+    slot: u8,
+    shared: Arc<Shared>,
+}
+
+impl FrameSource {
+    pub fn slot(&self) -> u8 {
+        self.slot
+    }
+
+    pub fn latest_jpeg(&self) -> Option<Vec<u8>> {
+        self.shared.latest_jpeg.lock().ok()?.clone()
+    }
 }
 
 impl Drop for Camera {

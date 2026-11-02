@@ -51,7 +51,30 @@ synthetic images only; it has not been validated on real captures.
 `correct_throw` requires `dart` (1–3), `label`, `expected_revision`, and
 `expected_session_id` from a current snapshot. Only existing throws can be
 corrected. It preserves occupancy, scene, and `synthetic`, sets `corrected: true`,
-and emits `throw_corrected`; stale edits or invalid labels are rejected.
+and emits `throw_corrected`; stale edits or invalid labels are rejected. An
+optional `position` `[x, y]` (mm on the board plane, +y toward the 20, within
+500 mm of the bull) records where the dart really is; without it the corrected
+throw has no position.
+
+`demo_throw` also takes an optional `position`, as clicked on a board.
+
+Throws carry `position` (same units) when it is known: where the live detector
+placed the dart, where a correction put it, or where a demo throw was clicked. The browser UI draws darts
+there, and at the middle of their segment otherwise.
+
+With `debug.save_corrections` set to `true` (default `false`), each correction
+writes a folder `<time>-dart<N>-<detected>-to-<corrected>` into `debug/` beside
+the configuration file (`/data/ochecore/debug` in the container image). It holds
+`entry.json` (board, session, dart, detected label, score, uncertainty and
+position, corrected label, score and position, the visit, the detector's
+description of the arrival and of each camera's view, detection and camera
+settings, camera status, and the calibration record) and, for live darts, each
+camera's JPEG of the settled scene before the dart (`before-camN.jpg`) and the
+one it was reported in (`after-camN.jpg`). Pictures are kept in memory only for
+the darts of the current visit. `debug.keep_corrections` (50, 100, 200 by
+default, or `all`, stored as 0) sets how many of the newest entries are kept;
+older ones are deleted after each save, and with `all` the folder grows without
+limit. A failure to save is logged and does not undo the correction.
 
 `cameras.<slot>.resolution` accepts `WIDTHxHEIGHT` as an atomic config change.
 Discovery returns `devices` (preferred path, aliases, name, modes, optional error)

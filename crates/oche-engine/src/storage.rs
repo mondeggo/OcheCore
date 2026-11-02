@@ -36,6 +36,14 @@ impl Store {
         })
     }
 
+    /// The folder holding the configuration file.
+    pub fn dir(&self) -> &Path {
+        self.path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."))
+    }
+
     pub fn load_or_create(&self) -> Result<Config> {
         if self.path.try_exists()? {
             return read(&self.path);

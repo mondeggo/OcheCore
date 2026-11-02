@@ -42,7 +42,7 @@
           <div class="control-buttons">
             <button class="btn btn-small" type="button" data-command="start">Start</button>
             <button class="btn btn-small" type="button" data-command="stop">Stop</button>
-            <button class="btn btn-small" type="button" data-command="reset">Reset visit</button>
+            <button class="btn btn-small" type="button" data-command="reset" title="Clears the scores; darts on the board stay until taken out">Reset visit</button>
             <button class="btn btn-small" type="button" data-command="demo_takeout" data-args='{"remaining":0}' data-demo-only hidden>Take out darts</button>
             <button class="btn btn-small btn-primary" type="button" data-command="calibrate">Calibrate</button>
           </div>
@@ -61,11 +61,22 @@
       <section class="panel debug-throws" aria-labelledby="throws-title">
         <div class="panel-header">
           <h2 id="throws-title">Visit</h2>
+          <div class="view-switch is-inline" id="visit-view" role="radiogroup" aria-label="Visit view">
+            <button type="button" role="radio" aria-checked="true" data-visit-view="board">Board</button>
+            <button type="button" role="radio" aria-checked="false" data-visit-view="cameras">Cameras</button>
+          </div>
           <span class="visit-total">Total <strong id="visit-total">0</strong></span>
         </div>
         <div class="dart-slots" id="dart-slots"></div>
-        <div class="board-stage">
+        <div class="board-stage" id="visit-board">
           <svg id="throw-board" viewBox="-235 -235 470 470" role="img" aria-label="Dartboard with the darts of the current visit; in demo mode, click to throw"></svg>
+        </div>
+        <div class="debug-cameras" id="visit-cameras" hidden>
+          <div class="debug-cameras-head">
+            <p class="hint" id="pictures-caption">No pictures yet.</p>
+            <button class="btn btn-small" type="button" id="take-pictures">Take pictures</button>
+          </div>
+          <div class="debug-camera-grid" id="debug-camera-grid"></div>
         </div>
         <div class="quick-throws" role="group" aria-label="Quick demo throws" data-demo-only hidden>
           <button class="throw-btn" type="button" data-throw="T20">T20</button>

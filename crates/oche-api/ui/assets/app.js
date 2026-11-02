@@ -578,9 +578,12 @@ function boardActivity(snapshot) {
     case "partial_takeout":
       return make("busy", "Taking out", "darts are being removed; finish clearing the board");
     case "darts_present":
-      return snapshot.throws.length >= 3
-        ? make("attention", "Take out darts", "the visit is complete; remove the darts")
-        : make("ready", "Ready", snapshot.physical_darts == null ? "" : `${snapshot.physical_darts} on the board`);
+      if (snapshot.throws.length >= 3) return make("attention", "Take out darts", "the visit is complete; remove the darts");
+      /* A reset clears the visit, not the board: the demo takes no fourth dart. */
+      if (snapshot.mode === "demo" && snapshot.physical_darts >= 3) {
+        return make("attention", "Take out darts", "three darts are still on the board; take them out");
+      }
+      return make("ready", "Ready", snapshot.physical_darts == null ? "" : `${snapshot.physical_darts} on the board`);
     case "empty":
       return make("ready", "Ready", "board empty");
     default:
@@ -1696,8 +1699,13 @@ function stripState(snapshot) {
   return [activity.label, { idle: "stopped", problem: "problem", attention: "takeout" }[activity.level] || "busy"];
 }
 
+/* Where a dart is drawn: its position (board mm, +y to the 20) in SVG
+   coordinates, or the middle of its segment when only the label is known. */
+const dartPoint = dart => dart.position ? [dart.position[0], -dart.position[1]] : labelPoint(dart.label);
+
 /* Shared by the test step, the board view and debug; `interactive` boards
-   take demo throws. */
+   take demo throws. Clicking a dart in the strip, then where it really is on
+   the board, corrects it (correct_throw with that position). */
 function createPlayView(interactive = false) {
   const board = document.getElementById("throw-board");
   const drawn = drawBoard(board, identity, { numberSize: 22 });
@@ -1713,14 +1721,19 @@ function createPlayView(interactive = false) {
   const slots = document.getElementById("dart-slots");
   const total = document.getElementById("visit-total");
   const boardState = document.getElementById("board-state");
+  /* The dart being corrected (0-2), or null. */
+  let correcting = null;
 
   function render(snapshot) {
     const { throws } = snapshot;
+    if (correcting !== null && !throws[correcting]) correcting = null;
+    board.classList.toggle("is-correcting", correcting !== null);
     slots.innerHTML = [0, 1, 2].map(index => {
       const dart = throws[index];
       if (!dart) return '<span class="dart-slot">–</span>';
-      const title = dart.uncertain ? ` title="${escapeHtml(dart.uncertainty || "Position uncertain")}"` : "";
-      return `<span class="dart-slot is-filled${dart.uncertain ? " is-uncertain" : ""}"${title}>${escapeHtml(dart.label)}</span>`;
+      const why = dart.uncertain ? `${dart.uncertainty || "Position uncertain"}. ` : "";
+      const classes = `dart-slot is-filled${dart.uncertain ? " is-uncertain" : ""}${dart.corrected ? " is-corrected" : ""}${correcting === index ? " is-correcting" : ""}`;
+      return `<button type="button" class="${classes}" data-correct="${index}" title="${escapeHtml(`${why}Click to correct dart ${index + 1}`)}" aria-pressed="${correcting === index}">${escapeHtml(dart.label)}${dart.corrected ? "*" : ""}</button>`;
     }).join("");
     total.textContent = visitTotal(throws);
     if (boardState) {
@@ -1735,7 +1748,7 @@ function createPlayView(interactive = false) {
     hitLayer.replaceChildren();
     dartLayer.replaceChildren();
     throws.slice(0, 3).forEach((dart, index) => {
-      const point = labelPoint(dart.label);
+      const point = dartPoint(dart);
       if (!point) return;
       const area = hitArea(...point);
       if (area) svgEl("polygon", { points: pointsAttr(area), fill: COLORS.yellow, opacity: 0.85 }, hitLayer);
@@ -1765,6 +1778,36 @@ function createPlayView(interactive = false) {
     drawn.setAttribute("visibility", url ? "hidden" : "visible");
     hitLayer.setAttribute("opacity", url ? 0.45 : 1);
   }
+
+  slots.addEventListener("click", event => {
+    const button = event.target.closest("[data-correct]");
+    if (!button || !daemon.snapshot) return;
+    const index = Number(button.dataset.correct);
+    correcting = correcting === index ? null : index;
+    if (correcting !== null) toast(`Click where dart ${index + 1} really is on the board.`);
+    render(daemon.snapshot);
+  });
+
+  /* While correcting, a click on the board places the dart instead of
+     throwing one. */
+  board.addEventListener("click", async event => {
+    if (correcting === null || !daemon.snapshot) return;
+    event.stopImmediatePropagation();
+    const point = svgPoint(board, event);
+    const position = [Math.round(point.x * 10) / 10, Math.round(-point.y * 10) / 10];
+    const label = scoreAt(point.x, point.y);
+    const { revision, session_id: session } = daemon.snapshot;
+    const dart = correcting + 1;
+    correcting = null;
+    await attempt(api.command("correct_throw", {
+      dart,
+      label,
+      position,
+      expected_revision: revision,
+      expected_session_id: session
+    }), `Dart ${dart} corrected to ${label}.`);
+    render(daemon.snapshot);
+  }, true);
 
   return { board, render, showPhoto };
 }
@@ -1819,6 +1862,13 @@ function createBoardViewSwitch(view) {
 
   const cameras = snapshot => snapshot.mode !== "live" ? [] : snapshot.config.cameras
     .filter(camera => calibrationFor(snapshot.calibration, camera) && isStreaming(snapshot, camera.slot));
+  /* Why a camera cannot be shown, or "" when it can. */
+  const unavailable = (snapshot, camera) =>
+    snapshot.mode !== "live" ? "Needs the live daemon with cameras (not --demo)"
+      : !camera.device ? "No device assigned"
+      : !calibrationFor(snapshot.calibration, camera) ? "Not calibrated with its current settings"
+      : !isStreaming(snapshot, camera.slot) ? "Not streaming: start the board"
+      : "";
 
   async function refresh() {
     const snapshot = daemon.snapshot;
@@ -1850,18 +1900,20 @@ function createBoardViewSwitch(view) {
     if (choice !== "drawn" && !available.some(camera => String(camera.slot) === choice)) {
       view.showPhoto(null);
     }
-    const key = JSON.stringify([available.map(camera => camera.slot), choice]);
+    const items = [["drawn", "Drawn", ""], ...snapshot.config.cameras.map(camera =>
+      [String(camera.slot), `Cam ${camera.slot}`, unavailable(snapshot, camera)])];
+    const key = JSON.stringify([items, choice, available.length]);
     if (key === shownKey) return;
     shownKey = key;
-    container.hidden = available.length === 0;
-    const items = [["drawn", "Drawn"], ...available.map(camera => [String(camera.slot), `Cam ${camera.slot}`])];
-    container.innerHTML = items.map(([value, label]) =>
-      `<button type="button" role="radio" aria-checked="${value === choice}" data-view="${value}">${label}</button>`).join("");
+    container.hidden = false;
+    const shown = available.some(camera => String(camera.slot) === choice) ? choice : "drawn";
+    container.innerHTML = items.map(([value, label, why]) =>
+      `<button type="button" role="radio" aria-checked="${value === shown}" data-view="${value}"${why ? ` disabled title="${escapeHtml(why)}"` : ` title="${value === "drawn" ? "The drawn board" : `Camera ${value}'s picture, flattened with the 20 up`}"`}>${label}</button>`).join("");
   }
 
   container.addEventListener("click", event => {
     const button = event.target.closest("[data-view]");
-    if (!button) return;
+    if (!button || button.disabled) return;
     choice = button.dataset.view;
     storage.set("board-view", choice);
     shownKey = "";
@@ -1874,15 +1926,21 @@ function createBoardViewSwitch(view) {
   return { render, refresh };
 }
 
-/* In demo mode, clicking the board or a quick-throw button injects a throw. */
+/* In demo mode, clicking the board or a quick-throw button injects a throw;
+   a click also gives the dart its position, so it is drawn where clicked. */
 function bindDemoThrows(view, onThrow = () => {}) {
-  const send = async label => {
+  const send = async (label, position) => {
     if (!daemon.snapshot?.capabilities.synthetic_input) return;
-    if (await attempt(api.command("demo_throw", { label }))) onThrow();
+    const args = position ? { label, position } : { label };
+    if (await attempt(api.command("demo_throw", args))) onThrow();
   };
   view.board.addEventListener("click", event => {
     const point = svgPoint(view.board, event);
-    send(scoreAt(point.x, point.y));
+    /* Beyond 500 mm is no position the daemon takes; it is a miss anyway. */
+    const position = Math.hypot(point.x, point.y) <= 500
+      ? [Math.round(point.x * 10) / 10, Math.round(-point.y * 10) / 10]
+      : null;
+    send(scoreAt(point.x, point.y), position);
   });
   document.querySelectorAll("[data-throw]").forEach(button => {
     button.addEventListener("click", () => send(button.dataset.throw));
@@ -1931,6 +1989,69 @@ function initTestPage() {
 
 /* ---------- Settings: the terminal UI's settings, in the browser ---------- */
 
+/* The configuration as the keys `PUT /api/v1/config` accepts. */
+function configEntries(config) {
+  const entries = [
+    ["board.id", config.board.id],
+    ["board.name", config.board.name],
+    ["server.bind", config.server.bind],
+    ["server.port", config.server.port],
+    ["detection.speed", config.detection.speed],
+    ["detection.standby_seconds", config.detection.standby_seconds],
+    ["debug.save_corrections", Boolean(config.debug?.save_corrections)],
+    ["debug.keep_corrections", config.debug?.keep_corrections ?? 200],
+    ["cameras.count", config.cameras.length]
+  ];
+  config.cameras.forEach(camera => {
+    const prefix = `cameras.${camera.slot}`;
+    entries.push(
+      [`${prefix}.device`, camera.device],
+      [`${prefix}.resolution`, `${camera.width}x${camera.height}`],
+      [`${prefix}.fps`, camera.fps],
+      [`${prefix}.rotation`, camera.rotation],
+      [`${prefix}.exposure`, camera.exposure ?? "auto"],
+      [`${prefix}.hint`, camera.hint ? camera.hint.join(",") : ""]
+    );
+  });
+  return entries;
+}
+
+/* Config changes that turn the current configuration into `imported` (the
+   shape of `oche-core config export --json`). The board keeps its identity;
+   the listen address is skipped where a container's port mapping decides it.
+   Devices are cleared before they are reassigned, so moving one between
+   slots never holds it twice. */
+function importChanges(snapshot, imported) {
+  if (!imported || typeof imported !== "object" || !imported.board || !imported.server ||
+      !imported.detection || !Array.isArray(imported.cameras) ||
+      imported.cameras.length < 1 || imported.cameras.length > MAX_CAMERAS) {
+    throw new Error("This is not an OcheCore settings file.");
+  }
+  const target = configEntries({ debug: {}, ...imported });
+  const current = new Map(configEntries(snapshot.config));
+  const skip = key => key === "board.id" || key === "cameras.count" ||
+    (!imported.debug && key.startsWith("debug.")) ||
+    (snapshot.listener_fixed && key.startsWith("server.")) || /^cameras\.\d+\.device$/.test(key);
+  const changes = [];
+  if (imported.cameras.length !== snapshot.config.cameras.length) {
+    changes.push(["cameras.count", imported.cameras.length]);
+  }
+  const devices = target.filter(([key]) => /^cameras\.\d+\.device$/.test(key));
+  devices.forEach(([key, value]) => {
+    if (current.has(key) && String(current.get(key)) !== String(value)) changes.push([key, ""]);
+  });
+  devices.forEach(([key, value]) => {
+    if (String(current.get(key) ?? "") !== String(value) || changes.some(([k]) => k === key)) {
+      changes.push([key, value]);
+    }
+  });
+  target.forEach(([key, value]) => {
+    if (!skip(key) && String(current.get(key) ?? "") !== String(value)) changes.push([key, value]);
+  });
+  return changes;
+}
+
+
 /* Frames analysed per second per camera (Speed::analysis_hz in oche-domain). */
 const ANALYSIS_HZ = { very_low: 3, low: 5, default: 10, high: 15, very_high: 30 };
 
@@ -1962,7 +2083,42 @@ function cameraSummary(snapshot, camera, inventory) {
   };
 }
 
+function initBackup() {
+  const exportButton = document.getElementById("export-settings");
+  const importInput = document.getElementById("import-settings");
+  exportButton.addEventListener("click", () => {
+    const snapshot = daemon.snapshot;
+    if (!snapshot) return;
+    const blob = new Blob([JSON.stringify(snapshot.config, null, 2)], { type: "application/json" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `ochecore-${snapshot.config.board.name.replace(/[^\w-]+/g, "-").toLowerCase()}-settings.json`;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  });
+  importInput.addEventListener("change", async () => {
+    const [file] = importInput.files;
+    importInput.value = "";
+    if (!file || !daemon.snapshot) return;
+    let changes;
+    try {
+      changes = importChanges(daemon.snapshot, JSON.parse(await file.text()));
+    } catch (error) {
+      toast(error instanceof SyntaxError ? "This file is not JSON." : error.message);
+      return;
+    }
+    if (!changes.length) {
+      toast("These settings are already in use.");
+      return;
+    }
+    const list = changes.map(([key, value]) => `${key} = ${value === "" ? "(cleared)" : value}`).join("\n");
+    if (!window.confirm(`Apply ${changes.length} changes from ${file.name}?\n\n${list}`)) return;
+    await attempt(api.configure(changes), `Imported ${file.name}.`);
+  });
+}
+
 function initSettingsPage() {
+  initBackup();
   const all = boardInputs();
   const forms = [
     [document.getElementById("board-form"), { "board.name": all["board.name"] }],
@@ -1974,6 +2130,8 @@ function initSettingsPage() {
   const defaultNote = note.textContent;
   const list = document.getElementById("camera-list");
   const summary = document.getElementById("detection-summary");
+  const saveCorrections = document.getElementById("debug-save-corrections");
+  const keepCorrections = document.getElementById("debug-keep-corrections");
   const settings = document.getElementById("detection-settings");
   let inventory = { devices: [], warnings: [] };
   let settingsKey = "";
@@ -1992,6 +2150,12 @@ function initSettingsPage() {
         </li>`;
     }).join("");
     summary.textContent = detectionSummary(snapshot);
+    if (document.activeElement !== saveCorrections) {
+      saveCorrections.value = String(Boolean(snapshot.config.debug?.save_corrections));
+    }
+    if (document.activeElement !== keepCorrections) {
+      keepCorrections.value = String(snapshot.config.debug?.keep_corrections ?? 200);
+    }
     renderListener(snapshot, network, note, defaultNote);
     networkSave.disabled = snapshot.listener_fixed;
     /* Leave a list alone while it is being used. */
@@ -2011,6 +2175,14 @@ function initSettingsPage() {
       saving = false;
     });
     form.addEventListener("input", event => setFieldError(event.target, ""));
+  });
+
+  [[saveCorrections, "debug.save_corrections"], [keepCorrections, "debug.keep_corrections"]].forEach(([select, key]) => {
+    select.addEventListener("change", async () => {
+      await attempt(api.setConfig(key, select.value), "Saved.");
+      select.blur();
+      render(daemon);
+    });
   });
 
   settings.addEventListener("change", async event => {

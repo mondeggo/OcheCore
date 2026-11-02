@@ -109,14 +109,22 @@ setup** leads back to Settings.
   camera and a calibration for each, it opens setup instead. The switch on the
   board shows either the drawn board or a calibrated camera's picture flattened
   through its calibration: face-on with the 20 up, refreshed every few seconds
-  and whenever the visit changes. The dart markers sit where their segment is,
-  not where the dart is; the flattened picture shows the darts themselves.
+  and whenever the visit changes. Cameras that are not calibrated or not
+  streaming are greyed out and say why. Darts are drawn where the detector placed
+  them (at the middle of their segment when it could not). To correct a dart on
+  Live, Test or Debug, click it in the strip, then click where it really is on
+  the board or on the camera picture; with **Save corrected darts** on in
+  Settings → Diagnostics, each correction is saved for analysis (see
+  [Native API](native-api.md)).
 - **Settings** (`/settings/`): the terminal UI's settings. **Board** (its name)
   and **Network** (listen address and port), each saved with **Save**; each
   camera's device, state and calibration; and the detection speed, standby time,
   resolution and frame rate, each saved when chosen. **Change** and **Calibrate**
   open those setup steps. A saved address waits for a restart, and Network says so
   until then. In Docker the address is greyed out: the port mapping decides it.
+  **Backup** exports the settings as JSON (as `oche-core config export --json`)
+  and imports such a file after listing the changes it makes; the board keeps its
+  identity and calibration, and in Docker its address.
 - **Setup** (`/setup/`), four steps:
   1. **Board:** name, listen address and port (the address applies after a restart).
   2. **Cameras:** a device, rotation and live preview per camera (two to four), and
@@ -136,7 +144,10 @@ setup** leads back to Settings.
   4. **Test:** throw a few darts and check the scores. In demo mode, buttons and
      clicks on the board inject throws.
 - **Debug** (`/debug/`): service commands, demo throws, the saved configuration
-  as config keys, and the raw event log.
+  as config keys, and the raw event log. The Visit panel switches between the
+  board and **Cameras**: a still picture from each camera, retaken only after a
+  dart, a takeout, the board becoming ready or a calibration, or with **Take
+  pictures**, so the cameras are not streamed to the browser.
 
 Rotation turns the preview only; frames, hints and calibration stay in camera
 pixels. Changing a camera's device clears its 20 reference. A resolution with the

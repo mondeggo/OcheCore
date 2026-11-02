@@ -361,6 +361,7 @@ fn handle_key(ui: &mut Ui, view: &View, key: KeyEvent, tx: &mpsc::Sender<Request
                         label: editor.value,
                         expected_revision,
                         expected_session_id,
+                        position: None,
                     })
                 } else if let Some(field) = editor.key.strip_prefix("cameras.*.") {
                     let mut queued = 0;
@@ -506,6 +507,7 @@ fn handle_key(ui: &mut Ui, view: &View, key: KeyEvent, tx: &mpsc::Sender<Request
                         label: dart.label.clone(),
                         expected_revision: snapshot.revision,
                         expected_session_id: snapshot.session_id,
+                        position: None,
                     }),
                 });
                 return;
@@ -563,6 +565,7 @@ fn handle_key(ui: &mut Ui, view: &View, key: KeyEvent, tx: &mpsc::Sender<Request
             tx,
             Request::Command(Command::DemoThrow {
                 label: "T20".into(),
+                position: None,
             }),
         ),
         KeyCode::Char('o') if snapshot.mode == Mode::Demo => send(

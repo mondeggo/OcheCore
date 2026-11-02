@@ -21,6 +21,38 @@ pub struct Config {
     pub server: ServerConfig,
     pub detection: DetectionConfig,
     pub cameras: Vec<CameraConfig>,
+    #[serde(default)]
+    pub debug: DebugConfig,
+}
+
+/// Diagnostics kept on the daemon's machine; saving is off by default.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct DebugConfig {
+    /// Save each corrected dart, with the cameras' pictures and what the
+    /// detector saw, to the `debug` folder beside the configuration.
+    #[serde(default)]
+    pub save_corrections: bool,
+    /// Newest saved corrections to keep: one of [`KEEP_CORRECTIONS`], or 0 to
+    /// keep them all (the folder then grows without limit).
+    #[serde(default = "default_keep_corrections")]
+    pub keep_corrections: u32,
+}
+
+/// Choices for [`DebugConfig::keep_corrections`]; 0 keeps all.
+pub const KEEP_CORRECTIONS: [u32; 4] = [50, 100, 200, 0];
+
+fn default_keep_corrections() -> u32 {
+    200
+}
+
+impl Default for DebugConfig {
+    fn default() -> Self {
+        Self {
+            save_corrections: false,
+            keep_corrections: default_keep_corrections(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -143,6 +175,7 @@ impl Default for Config {
             cameras: (1..=MIN_SCORING_CAMERAS as u8)
                 .map(CameraConfig::new)
                 .collect(),
+            debug: DebugConfig::default(),
         }
     }
 }
@@ -169,6 +202,9 @@ impl Config {
         }
         if ![0, 300, 600, 900, 1800, 3600].contains(&self.detection.standby_seconds) {
             return Err("detection.standby_seconds must be 0, 300, 600, 900, 1800, or 3600".into());
+        }
+        if !KEEP_CORRECTIONS.contains(&self.debug.keep_corrections) {
+            return Err("debug.keep_corrections must be 50, 100, 200, or all (0)".into());
         }
         if !(1..=4).contains(&self.cameras.len()) {
             return Err("configure between one and four camera slots".into());
@@ -227,6 +263,19 @@ impl Config {
                     .into_iter()
                     .find(|s| s.as_str() == value)
                     .ok_or("unknown speed preset")?
+            }
+            "debug.keep_corrections" => {
+                next.debug.keep_corrections = match value.trim() {
+                    "all" => 0,
+                    v => v.parse().map_err(|_| "use 50, 100, 200 or all")?,
+                }
+            }
+            "debug.save_corrections" => {
+                next.debug.save_corrections = match value.trim() {
+                    "true" | "on" | "1" => true,
+                    "false" | "off" | "0" => false,
+                    _ => return Err("use true or false".into()),
+                }
             }
             "detection.standby_seconds" => {
                 next.detection.standby_seconds =
@@ -329,7 +378,7 @@ pub enum SceneState {
     PartialTakeout,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Throw {
     pub label: String,
     pub score: u16,
@@ -343,6 +392,10 @@ pub struct Throw {
     /// Why the position could not be determined, with what each camera saw.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uncertainty: Option<String>,
+    /// Where the dart is on the board plane (mm, +y toward the 20): where the
+    /// detector placed it, or where a correction put it. `None` when unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<[f64; 2]>,
 }
 
 impl Throw {
@@ -376,6 +429,7 @@ impl Throw {
             corrected: false,
             uncertain: false,
             uncertainty: None,
+            position: None,
         })
     }
 }
@@ -389,6 +443,9 @@ pub enum Command {
     Wake,
     DemoThrow {
         label: String,
+        /// Where the synthetic dart landed (mm, +y toward the 20), when known.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        position: Option<[f64; 2]>,
     },
     DemoTakeout {
         remaining: u8,
@@ -405,6 +462,10 @@ pub enum Command {
         label: String,
         expected_revision: u64,
         expected_session_id: Uuid,
+        /// Where the dart really is (mm, +y toward the 20), when the operator
+        /// pointed at it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        position: Option<[f64; 2]>,
     },
 }
 
@@ -636,6 +697,17 @@ impl Snapshot {
                 "TAKE OUT DARTS",
                 "the visit is complete; remove the darts",
             ),
+            // A reset clears the visit, not the board: the demo takes no
+            // fourth dart until they are taken out.
+            SceneState::DartsPresent
+                if self.mode == Mode::Demo && self.physical_darts.unwrap_or(0) >= 3 =>
+            {
+                make(
+                    ActivityLevel::Attention,
+                    "TAKE OUT DARTS",
+                    "three darts are still on the board; take them out",
+                )
+            }
             SceneState::DartsPresent => BoardActivity {
                 level: ActivityLevel::Ready,
                 label: "READY",
@@ -820,6 +892,17 @@ mod tests {
         assert_eq!(s.activity().label, "STANDBY");
         s.state = ServiceState::Stopped;
         assert_eq!(s.activity().label, "STOPPED");
+    }
+
+    #[test]
+    fn a_full_demo_board_asks_for_takeout_after_a_visit_reset() {
+        let mut s = live_snapshot();
+        s.mode = Mode::Demo;
+        s.scene = SceneState::DartsPresent;
+        s.physical_darts = Some(3);
+        assert_eq!(s.activity().label, "TAKE OUT DARTS");
+        s.physical_darts = Some(2);
+        assert_eq!(s.activity().label, "READY");
     }
 
     #[test]

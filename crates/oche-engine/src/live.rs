@@ -22,7 +22,7 @@ use oche_vision::image::RgbImage;
 use oche_vision::live::{CameraChange, Detector, Event, LineMapper, Settings};
 use oche_vision::mask::dart_ends;
 
-use crate::{Engine, Observation, error};
+use crate::{ArrivalEvidence, Engine, Observation, error};
 
 /// A calibration is rejected when any camera's wire points fit worse than this.
 const MAX_WIRE_RMS_MM: f64 = 1.0;
@@ -671,12 +671,13 @@ fn start(
     images: Option<std::path::PathBuf>,
 ) -> Running {
     let (samples, receiver) = mpsc::sync_channel(SAMPLE_QUEUE);
-    let cameras = plan
+    let cameras: Vec<Camera> = plan
         .specs
         .iter()
         .map(|spec| Camera::start(spec.clone(), samples.clone()))
         .collect();
     drop(samples);
+    let frames: Vec<oche_capture::FrameSource> = cameras.iter().map(Camera::frames).collect();
     let detector = std::thread::Builder::new()
         .name("detector".into())
         .spawn(move || {
@@ -686,6 +687,15 @@ fn start(
             }
             let mut reported = false;
             let mut arrivals = 0u32;
+            // Each camera's JPEG of the last settled scene, the "before" of the
+            // next dart. Bounded: one picture per camera.
+            let mut scene: Vec<(u8, Vec<u8>)> = Vec::new();
+            let pictures = || -> Vec<(u8, Vec<u8>)> {
+                frames
+                    .iter()
+                    .filter_map(|f| f.latest_jpeg().map(|jpeg| (f.slot(), jpeg)))
+                    .collect()
+            };
             while let Ok(sample) = receiver.recv() {
                 let event = detector.push(sample.slot, sample.timestamp, sample.luma);
                 let motion = detector.in_motion();
@@ -712,6 +722,17 @@ fn start(
                     arrivals += 1;
                     save_images(dir, arrivals, changes, verbose);
                 }
+                let now = pictures();
+                let evidence = match &event {
+                    Event::Arrival { impact, .. } => Some(ArrivalEvidence {
+                        position: impact.as_ref().ok().map(|i| [i.point.x, i.point.y]),
+                        detection: describe(&event, &board),
+                        before: std::mem::take(&mut scene),
+                        after: now.clone(),
+                    }),
+                    _ => None,
+                };
+                scene = now;
                 let observation = match event {
                     Event::Baseline { .. } => Observation::Baseline,
                     Event::Disturbance { .. } => Observation::Disturbance,
@@ -727,7 +748,12 @@ fn start(
                     },
                 };
                 match engine.lock() {
-                    Ok(mut engine) => engine.observe(observation),
+                    Ok(mut engine) => {
+                        engine.observe(observation);
+                        if let Some(evidence) = evidence {
+                            engine.note_arrival(evidence);
+                        }
+                    }
                     Err(_) => return,
                 }
             }
