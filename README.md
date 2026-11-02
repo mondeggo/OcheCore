@@ -35,8 +35,11 @@
 <br>
 
 Offline Rust board service, command-line tools, and an interactive terminal UI for
-a dartboard watched by one to four USB cameras. Game rules and player management
-belong to the applications that use it.
+a dartboard watched by two to four USB cameras. Scoring needs at least two
+cameras, because one camera sees a dart only as a line along its shaft; a third
+or fourth camera is welcome and gives the fusion more views, for example when a
+flight hides a dart from one camera. Game rules and player management belong to
+the applications that use it.
 
 **Implemented:** foreground daemon, local/LAN management, persistent board ID and
 configuration, start/stop/reset/wake, logical standby, bounded native events,

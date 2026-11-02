@@ -43,8 +43,9 @@ oche-core calibrate --all             # empty board; asks for the dart the first
 `config set` validates and atomically saves through the daemon; board ID is read
 only. `init`, `config reset`, and `config validate` are local file operations.
 Camera count is 1–4 in the configuration, but scoring needs at least two cameras,
-so setup in the terminal and browser asks for two to four; decreasing it removes
-the highest slots. Assigned device paths must be unique.
+so setup in the terminal and browser asks for two to four. A third or fourth
+camera is welcome: it adds views for the fusion. Decreasing the count removes the
+highest slots. Assigned device paths must be unique.
 
 To start fresh, stop the daemon with Ctrl+C (or stop its container), run
 `oche-core config reset`, then `oche-core run`. Reset replaces all configuration

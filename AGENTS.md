@@ -8,9 +8,10 @@ inputs and evidence. The roadmap is the remaining plan, not proof of
 implemented behavior. Keep documentation explicit about what is planned,
 implemented, and verified.
 
-OcheCore is an offline Rust board service with CLI/TUI control, one to four USB
-cameras, a native API, and a versioned Autodarts compatibility adapter. Game rules
-and player management belong to consuming applications.
+OcheCore is an offline Rust board service with CLI/TUI control, two to four USB
+cameras (scoring needs at least two; more are welcome), a native API, and a
+versioned Autodarts compatibility adapter. Game rules and player management belong
+to consuming applications.
 
 ## Implementation order
 
