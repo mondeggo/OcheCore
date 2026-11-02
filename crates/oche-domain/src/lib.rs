@@ -1,6 +1,10 @@
 //! Native protocol types. Autodarts compatibility will live in a separate adapter.
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, net::IpAddr};
+use std::{
+    collections::HashSet,
+    net::IpAddr,
+    time::{SystemTime, UNIX_EPOCH},
+};
 use uuid::Uuid;
 
 pub mod board;
@@ -434,6 +438,58 @@ impl Throw {
     }
 }
 
+/// How the live detector's darts fared since the counter was last reset: each
+/// one it reported is right, corrected to another label, or uncertain (`?`).
+/// Synthetic darts never count.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Accuracy {
+    /// Darts the detector reported, including uncertain ones.
+    pub darts: u64,
+    /// Of those, darts an operator corrected to a different label.
+    pub corrected: u64,
+    /// Of those, darts reported as uncertain (`?`).
+    pub uncertain: u64,
+    /// When counting started; 0 when unknown.
+    pub since_unix_ms: u64,
+}
+
+impl Accuracy {
+    pub fn starting_now() -> Self {
+        Self {
+            since_unix_ms: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |d| d.as_millis().min(u64::MAX as u128) as u64),
+            ..Self::default()
+        }
+    }
+
+    /// Darts kept as the detector scored them.
+    pub fn right(&self) -> u64 {
+        self.darts.saturating_sub(self.corrected + self.uncertain)
+    }
+
+    /// Right darts as a whole percentage of all darts, halves rounded up as
+    /// the browser UI rounds them; `None` before the first dart.
+    pub fn percent(&self) -> Option<u64> {
+        (self.darts > 0).then(|| (self.right() * 200 + self.darts) / (self.darts * 2))
+    }
+
+    /// One line, for example `95% · 57 of 60 right · 2 corrected · 1 uncertain`.
+    pub fn summary(&self) -> String {
+        match self.percent() {
+            None => "no detected darts yet".into(),
+            Some(percent) => format!(
+                "{percent}% · {} of {} right · {} corrected · {} uncertain",
+                self.right(),
+                self.darts,
+                self.corrected,
+                self.uncertain
+            ),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
@@ -467,6 +523,8 @@ pub enum Command {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         position: Option<[f64; 2]>,
     },
+    /// Start the accuracy counter again from zero.
+    ResetAccuracy,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -535,6 +593,8 @@ pub struct Snapshot {
     /// The cameras see movement: a hand, a thrown dart, or a scene still settling.
     #[serde(default)]
     pub motion: bool,
+    #[serde(default)]
+    pub accuracy: Accuracy,
 }
 
 /// How a consumer should present a [`BoardActivity`].
@@ -862,7 +922,34 @@ mod tests {
                 .collect(),
             calibration: None,
             motion: false,
+            accuracy: Accuracy::default(),
         }
+    }
+
+    #[test]
+    fn accuracy_counts_uncertain_darts_against_the_detector() {
+        let none = Accuracy::default();
+        assert_eq!(none.percent(), None);
+        assert_eq!(none.summary(), "no detected darts yet");
+        let some = Accuracy {
+            darts: 60,
+            corrected: 2,
+            uncertain: 1,
+            since_unix_ms: 0,
+        };
+        assert_eq!(some.right(), 57);
+        assert_eq!(some.percent(), Some(95));
+        assert_eq!(
+            some.summary(),
+            "95% · 57 of 60 right · 2 corrected · 1 uncertain"
+        );
+        // 37 of 40 is 92.5%: rounded up, as the browser UI shows it.
+        let half = Accuracy {
+            darts: 40,
+            corrected: 3,
+            ..Accuracy::default()
+        };
+        assert_eq!(half.percent(), Some(93));
     }
 
     #[test]

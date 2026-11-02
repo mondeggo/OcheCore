@@ -1,11 +1,12 @@
 use anyhow::{Context, Result, bail};
 use fs2::FileExt;
-use oche_domain::{CalibrationRecord, Config};
+use oche_domain::{Accuracy, CalibrationRecord, Config};
 use std::{
     fs::{self, File, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
 };
+use uuid::Uuid;
 
 /// Held for the daemon lifetime, including across atomic config replacements.
 pub struct Store {
@@ -122,7 +123,64 @@ impl Store {
             .context("sync configuration directory")?;
         Ok(())
     }
+
+    /// `board.toml` keeps its accuracy counter in `board.accuracy.json`.
+    pub fn accuracy_path(&self) -> PathBuf {
+        sibling(&self.path, "accuracy.json")
+    }
+
+    /// The counter saved for `board`; `None` when there is none or it belongs
+    /// to another board ID, such as before a configuration reset.
+    pub fn load_accuracy(&self, board: Uuid) -> Result<Option<Accuracy>> {
+        let path = self.accuracy_path();
+        if !path.try_exists()? {
+            return Ok(None);
+        }
+        let text = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+        let mut record: serde_json::Value =
+            serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
+        let version = record["schema_version"].as_u64();
+        if version != Some(ACCURACY_VERSION) {
+            bail!(
+                "{} has schema version {version:?}; expected {ACCURACY_VERSION}",
+                path.display()
+            );
+        }
+        if record["board_id"].as_str() != Some(board.to_string().as_str()) {
+            return Ok(None);
+        }
+        let accuracy = serde_json::from_value(record["accuracy"].take())
+            .with_context(|| format!("parse {}", path.display()))?;
+        Ok(Some(accuracy))
+    }
+
+    pub fn save_accuracy(&self, board: Uuid, accuracy: &Accuracy) -> Result<()> {
+        let record = serde_json::json!({
+            "schema_version": ACCURACY_VERSION,
+            "board_id": board,
+            "accuracy": accuracy,
+        });
+        let path = self.accuracy_path();
+        let mut temp = tempfile::NamedTempFile::new_in(self.dir())?;
+        temp.write_all(serde_json::to_string_pretty(&record)?.as_bytes())?;
+        temp.as_file().sync_all()?;
+        temp.persist(&path)
+            .context("atomically replace the accuracy counter")?;
+        Ok(())
+    }
+
+    /// Forgets the accuracy counter, as a configuration reset does.
+    pub fn remove_accuracy(&self) -> Result<()> {
+        match fs::remove_file(self.accuracy_path()) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                Err(e).context("remove the accuracy counter")
+            }
+            _ => Ok(()),
+        }
+    }
 }
+
+const ACCURACY_VERSION: u64 = 1;
 
 fn sibling(config: &Path, suffix: &str) -> PathBuf {
     let stem = config
@@ -180,6 +238,30 @@ mod tests {
         config.server.port = 0;
         assert!(store.save(&config).is_err());
         assert_eq!(fs::read(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn accuracy_belongs_to_one_board_id_and_can_be_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::acquire(&dir.path().join("board.toml")).unwrap();
+        let board = store.initialize().unwrap().board.id;
+        assert!(store.load_accuracy(board).unwrap().is_none());
+        let counted = Accuracy {
+            darts: 3,
+            corrected: 1,
+            uncertain: 0,
+            since_unix_ms: 7,
+        };
+        store.save_accuracy(board, &counted).unwrap();
+        assert_eq!(store.load_accuracy(board).unwrap(), Some(counted));
+        // A configuration reset makes a new board ID: its counter starts empty.
+        assert!(store.load_accuracy(Uuid::new_v4()).unwrap().is_none());
+        store.remove_accuracy().unwrap();
+        store.remove_accuracy().unwrap();
+        assert!(store.load_accuracy(board).unwrap().is_none());
+
+        fs::write(store.accuracy_path(), r#"{"schema_version": 9}"#).unwrap();
+        assert!(store.load_accuracy(board).is_err());
     }
 
     fn record(created: u64) -> CalibrationRecord {

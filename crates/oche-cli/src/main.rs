@@ -91,6 +91,13 @@ enum Action {
         label: String,
     },
     Wake,
+    /// Show how many detected darts were kept, corrected or uncertain since
+    /// the count was last reset; `config reset` also clears it.
+    Accuracy {
+        /// Start the count again from zero.
+        #[arg(long)]
+        reset: bool,
+    },
     /// Follow native events; reconnects with a fresh snapshot.
     Events {
         /// Exit after this many events; omitted means follow until Ctrl-C.
@@ -385,6 +392,18 @@ async fn execute(args: Args) -> Result<()> {
             )?;
         }
         Some(Action::Wake) => show(&client.command(&Command::Wake).await?, args.json)?,
+        Some(Action::Accuracy { reset }) => {
+            let snapshot = if reset {
+                client.command(&Command::ResetAccuracy).await?
+            } else {
+                client.snapshot().await?
+            };
+            if args.json {
+                print_json(&snapshot.accuracy)?;
+            } else {
+                println!("Accuracy: {}", snapshot.accuracy.summary());
+            }
+        }
         Some(Action::Orient) => orient(&client, args.json).await?,
         Some(Action::Calibrate { camera, .. }) => {
             // Calibration needs to know where the 20 is. Ask once; later runs
@@ -674,6 +693,7 @@ fn show(snapshot: &Snapshot, json: bool) -> Result<()> {
             camera_state(snapshot, camera.slot)
         );
     }
+    println!("Accuracy: {}", snapshot.accuracy.summary());
     if snapshot.restart_required {
         println!("Listen settings saved; restart the daemon to apply them.");
     }

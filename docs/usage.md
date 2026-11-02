@@ -32,6 +32,8 @@ oche-core config set cameras.1.height 720
 oche-core config set cameras.1.fps 30
 oche-core config set cameras.1.rotation 90
 oche-core correct 1 D20              # correct an existing first dart
+oche-core accuracy                    # detected darts kept, corrected, uncertain
+oche-core accuracy --reset            # start the accuracy count again
 oche-core cameras available --json    # devices/modes on the daemon host
 oche-core cameras list --json
 oche-core cameras inspect --camera 1
@@ -56,6 +58,21 @@ is saved atomically at the end. For an unattended reset, use
 your board identity, use `oche-core config set server.port 5180` with the daemon
 running, then restart it. The separate `oche-core reset` command only resets the
 logical dart visit.
+
+### Accuracy count
+
+Every dart the cameras report counts once: **right**, **corrected** while you
+have changed it to a different score, or **uncertain** (`?`, counted against the
+detector even after you fill it in). Accuracy is right darts out of all of them,
+halves rounded up. Correcting a dart back to the detector's score, or to the same
+score, does not count as a correction. Demo darts are synthetic and never count.
+The count is saved in `board.accuracy.json` beside the configuration and
+survives restarts. It starts again from zero with `oche-core accuracy --reset`,
+**Reset count** in the terminal UI, **Reset** in Settings → Accuracy, or a full
+`oche-core config reset` (which deletes the file; a new board ID never inherits
+an old count). Darts on the board at a reset are left out of the new count. It
+reflects your own corrections, so a dart nobody corrected counts as right; it
+is not an independent accuracy measurement.
 
 The setup listen address belongs to this board: loopback permits local clients,
 and `0.0.0.0` listens on all IPv4 interfaces. `--host` selects a daemon to manage;
@@ -106,7 +123,8 @@ While setup runs, only its steps are shown; once the board is set up, **Exit
 setup** leads back to Settings.
 
 - **Live** (`/`): Start/Stop and Reset, the current visit's three darts and total
-  on a board, and a feed of game events. Until a live board has a device for every
+  on a board, and a feed of game events headed by the
+  [accuracy count](#accuracy-count) (hover for the details). Until a live board has a device for every
   camera and a calibration for each, it opens setup instead. The switch on the
   board shows either the drawn board or a calibrated camera's picture flattened
   through its calibration: face-on with the 20 up, refreshed every few seconds
@@ -123,6 +141,8 @@ setup** leads back to Settings.
   resolution and frame rate, each saved when chosen. **Change** and **Calibrate**
   open those setup steps. A saved address waits for a restart, and Network says so
   until then. In Docker the address is greyed out: the port mapping decides it.
+  **Accuracy** shows the [accuracy count](#accuracy-count) and when it started;
+  **Reset** asks before starting it again.
   **Backup** exports the settings as JSON (as `oche-core config export --json`)
   and imports such a file after listing the changes it makes; the board keeps its
   identity and calibration, and in Docker its address.
@@ -174,8 +194,9 @@ The screen has five sections, top to bottom:
 
 1. **Board settings:** name, IP address and port (saved ports and addresses take
    effect after a restart).
-2. **Darts:** the three slots of the current visit, notes on any unplaced dart, and
-   a one-line detection summary.
+2. **Darts:** the three slots of the current visit, notes on any unplaced dart,
+   a one-line detection summary, and the [accuracy count](#accuracy-count) with
+   a **Reset count** button that asks before resetting.
 3. **Controls:** **Start / Stop / Reset / Wake**, the board **State**, and a
    **Doing** line with an elapsed timer while a command runs (for example
    "Calibrating all cameras; keep the board empty and still").
@@ -224,6 +245,7 @@ full payloads or an ongoing diagnostic recording.
 | Tab / Shift-Tab, or 1 / 2 | Switch Board / Events |
 | s / x / r / w | Start / stop / reset visit / wake |
 | c / o | Calibrate all (asks for the dart first time) / record the 20 again |
+| a | Reset the accuracy count (asks first) |
 | Up / Down | Select setting, dart, or camera; scroll in Events |
 | PageUp / PageDown, Home / End | Scroll |
 | + / - | Add camera / remove last |

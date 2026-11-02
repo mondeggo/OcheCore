@@ -103,6 +103,10 @@ pub fn initialize(
         config = wizard(config, &mut input, &mut output)?;
     }
     store.save(&config)?;
+    if reset {
+        // The new board ID already starts a new count; remove the old file too.
+        store.remove_accuracy()?;
+    }
     Ok(config)
 }
 

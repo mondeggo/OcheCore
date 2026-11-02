@@ -26,6 +26,11 @@ pub struct Engine {
     /// What the cameras saw for each throw, for correction entries; kept
     /// alongside `throws`, in memory only.
     evidence: Vec<Option<ArrivalEvidence>>,
+    /// The label the live detector gave each throw, alongside `throws`;
+    /// `None` for darts the accuracy counter leaves out (synthetic,
+    /// uncertain, or counted before the last counter reset).
+    detected: Vec<Option<String>>,
+    accuracy: Accuracy,
     physical_darts: Option<u8>,
     revision: u64,
     sequence: u64,
@@ -77,6 +82,13 @@ impl Engine {
         let (events, _) = broadcast::channel(HISTORY_LIMIT);
         // An unreadable calibration is reported by `calibration_problem`, not fatal.
         let calibration = store.load_calibration().ok().flatten();
+        let accuracy = store
+            .load_accuracy(config.board.id)
+            .unwrap_or_else(|e| {
+                eprintln!("Starting a new accuracy count: {e:#}");
+                None
+            })
+            .unwrap_or_else(Accuracy::starting_now);
         Self {
             startup_server: config.server.clone(),
             config,
@@ -93,6 +105,8 @@ impl Engine {
             mode,
             throws: Vec::new(),
             evidence: Vec::new(),
+            detected: Vec::new(),
+            accuracy,
             physical_darts: (mode == Mode::Demo).then_some(0),
             revision: 0,
             sequence: 0,
@@ -166,6 +180,7 @@ impl Engine {
             cameras: self.cameras.clone(),
             calibration: self.calibration.clone(),
             motion: self.motion,
+            accuracy: self.accuracy.clone(),
         }
     }
 
@@ -266,11 +281,31 @@ impl Engine {
                 corrected.corrected = true;
                 // A new label without a position no longer matches the old one.
                 corrected.position = position;
+                // A dart counts as corrected while its label differs from the
+                // detector's, so correcting it twice or back changes the count.
+                let detected_label = self.detected[index].as_deref();
+                let was_wrong = detected_label.is_some_and(|d| d != current.label);
+                let now_wrong = detected_label.is_some_and(|d| d != corrected.label);
                 let detected = std::mem::replace(&mut self.throws[index], corrected);
                 if self.config.debug.save_corrections {
                     self.save_correction(dart, &detected, index);
                 }
+                if was_wrong != now_wrong {
+                    if now_wrong {
+                        self.accuracy.corrected += 1;
+                    } else {
+                        self.accuracy.corrected = self.accuracy.corrected.saturating_sub(1);
+                    }
+                    self.save_accuracy();
+                }
                 "throw_corrected"
+            }
+            Command::ResetAccuracy => {
+                self.accuracy = Accuracy::starting_now();
+                // Darts already on the board were counted before; leave them out.
+                self.detected.fill(None);
+                self.save_accuracy();
+                "accuracy_reset"
             }
             Command::DemoThrow { label, position } => {
                 self.require_demo()?;
@@ -294,6 +329,7 @@ impl Engine {
                 dart.position = position;
                 self.throws.push(dart);
                 self.evidence.push(None);
+                self.detected.push(None);
                 self.physical_darts = Some(self.physical_darts.unwrap_or(0) + 1);
                 self.scene = SceneState::DartsPresent;
                 "throw_accepted"
@@ -413,6 +449,7 @@ impl Engine {
         }
         let uncertain = scored.is_none();
         let (label, score) = scored.unwrap_or_else(|| ("?".into(), 0));
+        self.detected.push((!uncertain).then(|| label.clone()));
         self.throws.push(Throw {
             label,
             score,
@@ -423,6 +460,11 @@ impl Engine {
             position: None,
         });
         self.evidence.push(None);
+        self.accuracy.darts += 1;
+        if uncertain {
+            self.accuracy.uncertain += 1;
+        }
+        self.save_accuracy();
         if uncertain {
             "throw_uncertain"
         } else {
@@ -433,6 +475,17 @@ impl Engine {
     fn clear_throws(&mut self) {
         self.throws.clear();
         self.evidence.clear();
+        self.detected.clear();
+    }
+
+    /// A failure to save is reported; the count in memory stays current.
+    fn save_accuracy(&self) {
+        if let Err(e) = self
+            .store
+            .save_accuracy(self.config.board.id, &self.accuracy)
+        {
+            eprintln!("Could not save the accuracy count: {e:#}");
+        }
     }
 
     /// Attaches what the cameras saw to the throw the last observation
@@ -819,6 +872,81 @@ mod tests {
                 "takeout_completed",
                 "throw_uncertain"
             ]
+        );
+    }
+
+    #[test]
+    fn accuracy_counts_detected_darts_corrections_and_survives_restart_until_reset() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("board.toml");
+        let mut e = {
+            let store = storage::Store::acquire(&path).unwrap();
+            let config = store.initialize().unwrap();
+            Engine::new(config, store, Mode::Live, "127.0.0.1:5180".into())
+        };
+        let correct = |e: &mut Engine, dart: u8, label: &str| {
+            let s = e.snapshot();
+            e.command(Command::CorrectThrow {
+                dart,
+                label: label.into(),
+                expected_revision: s.revision,
+                expected_session_id: s.session_id,
+                position: None,
+            })
+            .unwrap()
+            .accuracy
+        };
+        e.command(Command::Start).unwrap();
+        e.observe(Observation::Baseline);
+        e.observe(Observation::Arrival(Some(("T20".into(), 60))));
+        e.observe(Observation::Arrival(Some(("S1".into(), 1))));
+        e.observe(Observation::Uncertain("only 1 usable dart line".into()));
+        // A fourth arrival is not a reported dart.
+        e.observe(Observation::Arrival(Some(("S5".into(), 5))));
+        let a = e.snapshot().accuracy;
+        assert_eq!((a.darts, a.corrected, a.uncertain), (3, 0, 1));
+        // Confirming the same label is no correction; twice or back is counted once.
+        assert_eq!(correct(&mut e, 1, "T20").corrected, 0);
+        assert_eq!(correct(&mut e, 2, "S18").corrected, 1);
+        assert_eq!(correct(&mut e, 2, "D18").corrected, 1);
+        assert_eq!(correct(&mut e, 2, "S1").corrected, 0);
+        assert_eq!(correct(&mut e, 2, "S18").corrected, 1);
+        // Filling in an uncertain dart leaves it counted as uncertain.
+        let a = correct(&mut e, 3, "S5");
+        assert_eq!((a.darts, a.corrected, a.uncertain, a.right()), (3, 1, 1, 1));
+
+        // The count survives a restart of the daemon.
+        drop(e);
+        let mut e = {
+            let store = storage::Store::acquire(&path).unwrap();
+            let config = store.load_or_create().unwrap();
+            Engine::new(config, store, Mode::Live, "127.0.0.1:5180".into())
+        };
+        assert_eq!(e.snapshot().accuracy, a);
+
+        // Demo darts are synthetic and never count.
+        let (_demo_dir, mut demo) = engine(Mode::Demo);
+        demo.command(Command::Start).unwrap();
+        demo.command(Command::DemoThrow {
+            label: "T20".into(),
+            position: None,
+        })
+        .unwrap();
+        assert_eq!(correct(&mut demo, 1, "S1").darts, 0);
+
+        // Resetting starts again and leaves darts on the board out of it.
+        e.command(Command::Start).unwrap();
+        e.observe(Observation::Baseline);
+        e.observe(Observation::Arrival(Some(("S20".into(), 20))));
+        let reset = e.command(Command::ResetAccuracy).unwrap().accuracy;
+        assert_eq!((reset.darts, reset.corrected, reset.uncertain), (0, 0, 0));
+        assert!(reset.since_unix_ms >= a.since_unix_ms);
+        assert_eq!(correct(&mut e, 1, "S5"), reset);
+        assert_eq!(e.history().last().unwrap().kind, "throw_corrected");
+        assert!(
+            e.history()
+                .iter()
+                .any(|event| event.kind == "accuracy_reset")
         );
     }
 

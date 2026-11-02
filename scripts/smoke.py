@@ -163,6 +163,11 @@ def main():
                 reset = cli("reset")
                 assert reset["physical_darts"] == 1 and reset["throws"] == []
                 cli("demo", "takeout")
+                # Demo darts are synthetic: the accuracy count stays empty.
+                accuracy = cli("accuracy")
+                assert accuracy["darts"] == 0 and accuracy["since_unix_ms"] > 0
+                accuracy = cli("accuracy", "--reset")
+                assert Path(config).with_name("board.accuracy.json").exists()
                 renamed = cli("config", "set", "board.name", "Smoke board")
                 assert renamed["config"]["board"]["id"] == initial["config"]["board"]["id"]
                 assert cli("stop")["state"] == "stopped"
@@ -275,6 +280,12 @@ def main():
                 snapshot_error = cli("cameras", "snapshot", "--camera", "1", "--out", str(Path(directory) / "frame.jpg"), ok=False)["error"]
                 assert "not streaming" in snapshot_error
                 assert not (Path(directory) / "frame.jpg").exists()
+                # The accuracy count survives a restart; a full config reset clears it.
+                assert restarted["accuracy"] == accuracy
+                daemon.terminate()
+                assert daemon.wait(timeout=5) == 0
+                cli("config", "reset", "--yes", "--defaults")
+                assert not Path(config).with_name("board.accuracy.json").exists()
                 print("PASS: init/reset and setup cancellation, CLI, TUI keyboard/mouse editing and restoration, native events, identity persistence, demo isolation, live-mode calibration and snapshot guards, port/ownership conflicts, and streaming shutdown")
             except BaseException:
                 log.flush()

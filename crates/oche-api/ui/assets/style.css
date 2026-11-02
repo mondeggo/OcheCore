@@ -1216,6 +1216,36 @@ select {
   margin-bottom: 0.6rem;
 }
 
+.event-panel .panel-header h2 {
+  margin-bottom: 0;
+}
+
+/* The detector's accuracy since its last reset; links to Settings. */
+.accuracy-count {
+  padding: 0.2rem 0.7rem;
+  border: 1.5px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  font-weight: 800;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.accuracy-count:hover,
+.accuracy-count:focus-visible {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.accuracy-summary {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
 .event-feed {
   flex: 1;
   min-height: 0;

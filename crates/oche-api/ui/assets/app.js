@@ -2117,8 +2117,31 @@ function initBackup() {
   });
 }
 
+/* The detector's accuracy, as `Accuracy::summary` words it in the terminal:
+   right darts out of all it reported, halves rounded up. */
+function accuracyPercent({ darts = 0, corrected = 0, uncertain = 0 } = {}) {
+  if (!darts) return null;
+  return Math.round(Math.max(0, darts - corrected - uncertain) * 100 / darts);
+}
+
+function accuracySummary(accuracy = {}) {
+  const { darts = 0, corrected = 0, uncertain = 0 } = accuracy;
+  const percent = accuracyPercent(accuracy);
+  if (percent === null) return "No detected darts yet";
+  const right = Math.max(0, darts - corrected - uncertain);
+  return `${percent}% · ${right} of ${darts} right · ${corrected} corrected · ${uncertain} uncertain`;
+}
+
 function initSettingsPage() {
   initBackup();
+  const accuracy = document.getElementById("accuracy-summary");
+  const resetAccuracy = document.getElementById("reset-accuracy");
+  resetAccuracy.addEventListener("click", async () => {
+    if (!window.confirm("Start the accuracy count again from zero? This cannot be undone.")) return;
+    resetAccuracy.disabled = true;
+    await attempt(api.command("reset_accuracy"), "Accuracy count reset.");
+    resetAccuracy.disabled = false;
+  });
   const all = boardInputs();
   const forms = [
     [document.getElementById("board-form"), { "board.name": all["board.name"] }],
@@ -2150,6 +2173,9 @@ function initSettingsPage() {
         </li>`;
     }).join("");
     summary.textContent = detectionSummary(snapshot);
+    const since = snapshot.accuracy?.since_unix_ms;
+    accuracy.textContent = accuracySummary(snapshot.accuracy) +
+      (since ? ` · since ${new Date(since).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" })}` : "");
     if (document.activeElement !== saveCorrections) {
       saveCorrections.value = String(Boolean(snapshot.config.debug?.save_corrections));
     }
@@ -2255,8 +2281,13 @@ function initHomePage() {
     const view = createPlayView();
     const boardView = createBoardViewSwitch(view);
     let revision = null;
+    const accuracy = document.getElementById("home-accuracy");
     daemon.subscribe(({ snapshot: current, events }) => {
       document.getElementById("home-board-name").textContent = current.config.board.name;
+      const percent = accuracyPercent(current.accuracy);
+      accuracy.textContent = percent === null ? "Accuracy —" : `Accuracy ${percent}%`;
+      accuracy.title = `${accuracySummary(current.accuracy)}. Reset it in Settings.`;
+      accuracy.hidden = false;
       view.render(current);
       boardView.render(current);
       /* A new picture as soon as the visit changes. */

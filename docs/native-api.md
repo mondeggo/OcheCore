@@ -22,8 +22,19 @@ paths return the same 404 JSON error.
 
 Commands use JSON, for example `{"command":"start"}`. Available commands:
 `start`, `stop`, `reset`, `wake`, `demo_throw` with string `label`, and
-`demo_takeout` with integer `remaining`, `calibrate` with optional `camera`, `orient_begin`, and `orient_finish`.
+`demo_takeout` with integer `remaining`, `calibrate` with optional `camera`, `orient_begin`, `orient_finish`,
+and `reset_accuracy`.
 Demo commands require `run --demo`. Success returns the resulting snapshot.
+
+`reset_accuracy` starts the snapshot's `accuracy` count again from zero and
+emits `accuracy_reset`. `accuracy` holds `darts` (darts the live detector
+reported, uncertain ones included), `corrected` (of those, darts currently
+corrected to a different label than the detector gave), `uncertain` (reported
+as `?`), and `since_unix_ms` (when counting started). Synthetic darts never
+count; darts on the board at a reset are left out. The count is saved atomically
+in `board.accuracy.json` (schema version 1, with the board ID) beside the
+configuration; a file for another board ID is ignored, and `config reset`
+deletes it. A failure to save is logged and the count in memory stays current.
 
 `calibrate` needs live mode, a running board, an empty and lit board, and an
 orientation for each camera: `cameras.<slot>.hint` (pixel `x,y` of the 20
@@ -108,7 +119,8 @@ so `server.bind` and `server.port` changes return 400 and change nothing.
 Snapshots include configuration, API version, session ID, state revision, event
 sequence, monotonic uptime, service/scene state, mode, accepted throws, physical
 occupancy, capability flags, per-camera status (`off`, `starting`, `streaming`,
-`error` with delivered FPS and message), the current calibration record, and `motion`: whether the cameras currently see
+`error` with delivered FPS and message), the current calibration record, the
+`accuracy` count, and `motion`: whether the cameras currently see
 movement (not published as an event; read it from the snapshot). Clients derive a
 board activity from these fields (stopped, standby, starting, error, needs
 setup, needs calibration, motion, ready, taking out, take out darts); the
@@ -129,7 +141,7 @@ is always `snapshot`. Subscription and snapshot are atomic with respect to comma
 
 Mutation events: `started`, `stopped`, `visit_reset`, `throw_accepted`,
 `partial_takeout`, `takeout_completed`, `throw_corrected`, `config_changed`, `standby`,
-and in live mode `board_ready`, `throw_uncertain`, `arrival_ignored` (a fourth
+`accuracy_reset`, and in live mode `board_ready`, `throw_uncertain`, `arrival_ignored` (a fourth
 dart; the visit is kept), `scene_disturbed`, `cameras_changed` (state or error
 changes, not FPS), and `calibration_updated`. Repeated
 start/stop requests that do not change state do not duplicate transition events.

@@ -81,6 +81,7 @@ fn busy_label(request: &Request) -> String {
             Command::OrientBegin => "Remembering the empty board".into(),
             Command::OrientFinish => "Finding the dart in each camera".into(),
             Command::CorrectThrow { .. } => "Correcting the dart".into(),
+            Command::ResetAccuracy => "Resetting the accuracy count".into(),
             Command::DemoThrow { .. } | Command::DemoTakeout { .. } => {
                 "Sending a demo input".into()
             }
@@ -104,6 +105,23 @@ struct Editor {
     choices: Vec<String>,
     revision: u64,
     correction: Option<Command>,
+}
+
+impl Editor {
+    /// Asks before resetting the accuracy count; Enter confirms.
+    fn confirm_accuracy_reset() -> Self {
+        Self {
+            key: "Start the accuracy count again from zero? This cannot be undone.".into(),
+            value: String::new(),
+            choices: vec![],
+            revision: 0,
+            correction: Some(Command::ResetAccuracy),
+        }
+    }
+
+    fn confirms(&self) -> bool {
+        matches!(self.correction, Some(Command::ResetAccuracy))
+    }
 }
 
 #[derive(Default)]
@@ -349,7 +367,9 @@ fn handle_key(ui: &mut Ui, view: &View, key: KeyEvent, tx: &mpsc::Sender<Request
                     return;
                 }
                 let editor = ui.editor.take().unwrap();
-                let request = if let Some(Command::CorrectThrow {
+                let request = if editor.confirms() {
+                    Request::Command(Command::ResetAccuracy)
+                } else if let Some(Command::CorrectThrow {
                     dart,
                     expected_revision,
                     expected_session_id,
@@ -415,7 +435,10 @@ fn handle_key(ui: &mut Ui, view: &View, key: KeyEvent, tx: &mpsc::Sender<Request
                 editor.value.clear()
             }
             KeyCode::Char(ch)
-                if editor.choices.is_empty() && !ch.is_control() && editor.value.len() < 512 =>
+                if editor.choices.is_empty()
+                    && !editor.confirms()
+                    && !ch.is_control()
+                    && editor.value.len() < 512 =>
             {
                 editor.value.push(ch)
             }
@@ -461,7 +484,7 @@ fn handle_key(ui: &mut Ui, view: &View, key: KeyEvent, tx: &mpsc::Sender<Request
             return;
         }
         KeyCode::Char('?') => {
-            ui.notice = "Tab: Board/Events | arrows: select | Enter: edit | s/x/r/w: start/stop/reset/wake | c: calibrate | o: find the 20 again | +/-: cameras".into();
+            ui.notice = "Tab: Board/Events | arrows: select | Enter: edit | s/x/r/w: start/stop/reset/wake | c: calibrate | o: find the 20 again | +/-: cameras | a: reset accuracy".into();
             return;
         }
         _ => {}
@@ -556,6 +579,7 @@ fn handle_key(ui: &mut Ui, view: &View, key: KeyEvent, tx: &mpsc::Sender<Request
         KeyCode::Char('x') => send(ui, tx, Request::Command(Command::Stop)),
         KeyCode::Char('r') => send(ui, tx, Request::Command(Command::Reset)),
         KeyCode::Char('w') => send(ui, tx, Request::Command(Command::Wake)),
+        KeyCode::Char('a') => ui.editor = Some(Editor::confirm_accuracy_reset()),
         KeyCode::Char('o') if snapshot.mode == Mode::Live => orient_step(ui, tx),
         KeyCode::Char('c') if snapshot.mode == Mode::Live => {
             calibrate_or_orient(ui, snapshot, tx, None)
@@ -954,6 +978,7 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, _endpoint: &str) -> Vec<H
     let mut selected_row = 0;
     let mut camera_heading = None;
     let mut darts_row = None;
+    let mut accuracy_row = None;
     let mut controls_row = None;
     let mut calibrate_row = None;
     if let Some(error) = &view.error {
@@ -1037,6 +1062,12 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, _endpoint: &str) -> Vec<H
             "  {:27} {}",
             "detection",
             plain(&detection_summary(s))
+        )));
+        accuracy_row = Some(lines.len());
+        lines.push(Line::raw(format!(
+            "  {:27} {}",
+            "accuracy",
+            plain(&s.accuracy.summary())
         )));
         lines.push(Line::raw(""));
         lines.push(Line::styled("CONTROLS", selection(true)));
@@ -1192,6 +1223,23 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, _endpoint: &str) -> Vec<H
             x = rect.right() + 1;
         }
     }
+    if let Some(y) = accuracy_row.and_then(visible_y) {
+        let snapshot = view.snapshot.as_ref().unwrap();
+        // After the summary, or over its end on a narrow screen.
+        let text = 2 + 27 + 1 + snapshot.accuracy.summary().chars().count() as u16;
+        let label = "Reset count";
+        let width = label.len() as u16 + 2;
+        let x = (content.x + text + 2).min(content.right().saturating_sub(width));
+        button(
+            frame,
+            &mut hits,
+            Rect::new(x, y, width, 1),
+            label,
+            MouseAction::Key(KeyCode::Char('a')),
+            connected,
+            false,
+        );
+    }
     if let Some(y) = calibrate_row.and_then(visible_y) {
         let snapshot = view.snapshot.as_ref().unwrap();
         button(
@@ -1321,24 +1369,37 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, _endpoint: &str) -> Vec<H
             popup_height,
         );
         frame.render_widget(Clear, popup);
+        let confirms = editor.confirms();
         frame.render_widget(
-            Paragraph::new(vec![
-                Line::raw(&*editor.key),
-                Line::raw(""),
-                Line::styled(
-                    format!("{}▏", editor.value),
-                    Style::default().fg(Color::Yellow),
-                ),
-                Line::raw(if editor.choices.is_empty() {
-                    "Type / Backspace · Ctrl-U clear"
-                } else {
-                    "←/→ or mouse wheel to choose"
-                }),
-            ])
+            Paragraph::new(if confirms {
+                vec![
+                    Line::raw(&*editor.key),
+                    Line::raw(""),
+                    Line::raw("Enter: reset · Esc: keep counting"),
+                ]
+            } else {
+                vec![
+                    Line::raw(&*editor.key),
+                    Line::raw(""),
+                    Line::styled(
+                        format!("{}▏", editor.value),
+                        Style::default().fg(Color::Yellow),
+                    ),
+                    Line::raw(if editor.choices.is_empty() {
+                        "Type / Backspace · Ctrl-U clear"
+                    } else {
+                        "←/→ or mouse wheel to choose"
+                    }),
+                ]
+            })
             .wrap(Wrap { trim: false })
             .block(
                 Block::default()
-                    .title(" Edit configuration ")
+                    .title(if confirms {
+                        " Reset accuracy "
+                    } else {
+                        " Edit configuration "
+                    })
                     .borders(Borders::ALL),
             ),
             popup,
@@ -1379,7 +1440,9 @@ fn render(frame: &mut Frame, ui: &mut Ui, view: &View, _endpoint: &str) -> Vec<H
             }
         }
         let mut x = popup.x + 2;
-        let controls: &[(&str, KeyCode)] = if editor.choices.is_empty() {
+        let controls: &[(&str, KeyCode)] = if confirms {
+            &[("Reset", KeyCode::Enter), ("Cancel", KeyCode::Esc)]
+        } else if editor.choices.is_empty() {
             &[("Save", KeyCode::Enter), ("Cancel", KeyCode::Esc)]
         } else {
             &[
@@ -1837,6 +1900,39 @@ mod tests {
         assert!(matches!(
             rx.try_recv().unwrap(),
             Request::Command(Command::Calibrate { camera: None })
+        ));
+    }
+
+    #[test]
+    fn accuracy_is_shown_and_its_reset_asks_first() {
+        let mut view = view(2);
+        let mut ui = Ui::default();
+        let (tx, mut rx) = mpsc::channel(8);
+        let (_, text) = draw(&mut ui, &view, 110, 30);
+        assert!(text.contains("no detected darts yet"));
+        assert!(text.contains("Reset count"));
+        view.snapshot.as_mut().unwrap().accuracy = oche_domain::Accuracy {
+            darts: 20,
+            corrected: 1,
+            uncertain: 1,
+            since_unix_ms: 0,
+        };
+        let (_, text) = draw(&mut ui, &view, 110, 30);
+        assert!(text.contains("90% · 18 of 20 right · 1 corrected · 1 uncertain"));
+
+        // Cancelling sends nothing; typing does not change the question.
+        click(&mut ui, &view, MouseAction::Key(KeyCode::Char('a')), &tx);
+        key(&mut ui, &view, KeyCode::Char('x'), &tx);
+        let (_, text) = draw(&mut ui, &view, 110, 30);
+        assert!(text.contains("Reset accuracy") && text.contains("cannot be undone"));
+        key(&mut ui, &view, KeyCode::Esc, &tx);
+        assert!(ui.editor.is_none() && rx.try_recv().is_err());
+
+        key(&mut ui, &view, KeyCode::Char('a'), &tx);
+        key(&mut ui, &view, KeyCode::Enter, &tx);
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            Request::Command(Command::ResetAccuracy)
         ));
     }
 }

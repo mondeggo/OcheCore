@@ -93,6 +93,15 @@
           </div>
           <p class="hint settings-row">Each dart you correct is saved with the cameras' pictures, the detector's view and the true position in <code>debug/</code> beside the configuration (<code>/data/ochecore/debug</code> in Docker), about 1 MB each.</p>
         </section>
+
+        <section class="panel" aria-labelledby="accuracy-title">
+          <div class="panel-header">
+            <h2 id="accuracy-title">Accuracy</h2>
+            <button class="btn btn-small btn-ghost" type="button" id="reset-accuracy">Reset</button>
+          </div>
+          <p class="accuracy-summary" id="accuracy-summary" aria-live="polite"></p>
+          <p class="hint settings-row">Every dart the cameras report counts: right unless you correct it to another score, or uncertain (?). Demo darts do not count. A full configuration reset also clears it.</p>
+        </section>
       </div>
 
       <div class="settings-column">
