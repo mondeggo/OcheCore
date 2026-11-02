@@ -1122,8 +1122,8 @@ select {
   border: 1.5px solid var(--ink);
   border-radius: var(--radius);
   background:
-    radial-gradient(circle at 50% 50%, rgba(221, 245, 111, 0.2), transparent 55%),
-    var(--ink);
+    radial-gradient(circle at 50% 50%, rgba(221, 245, 111, 0.28), transparent 62%),
+    var(--paper);
   box-shadow: var(--shadow);
 }
 
@@ -1705,4 +1705,36 @@ input:disabled {
   color: var(--ink-soft);
   background: var(--line);
   cursor: not-allowed;
+}
+
+/* Live board view: the drawn board or a flattened camera picture. */
+.view-switch {
+  position: absolute;
+  top: 0.8rem;
+  right: 0.8rem;
+  display: flex;
+  gap: 0.2rem;
+  padding: 0.2rem;
+  border: 1.5px solid var(--ink);
+  border-radius: 999px;
+  background: var(--paper);
+}
+
+.view-switch button {
+  padding: 0.25rem 0.7rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  font-size: 0.74rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.view-switch button:hover {
+  background: var(--canvas);
+}
+
+.view-switch button[aria-checked="true"] {
+  color: var(--lime);
+  background: var(--ink);
 }

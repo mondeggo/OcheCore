@@ -1700,7 +1700,14 @@ function stripState(snapshot) {
    take demo throws. */
 function createPlayView(interactive = false) {
   const board = document.getElementById("throw-board");
-  drawBoard(board, identity, { numberSize: 22 });
+  const drawn = drawBoard(board, identity, { numberSize: 22 });
+  /* A flattened camera picture shown instead of the drawn board, cut to the
+     drawn board's outline. */
+  const clip = svgEl("clipPath", { id: "photo-clip" }, svgEl("defs", {}, board));
+  svgEl("circle", { r: 228 }, clip);
+  const photo = svgEl("image", {
+    x: -235, y: -235, width: 470, height: 470, hidden: "", "clip-path": "url(#photo-clip)"
+  }, board);
   const hitLayer = svgEl("g", { "pointer-events": "none" }, board);
   const dartLayer = svgEl("g", { "pointer-events": "none" }, board);
   const slots = document.getElementById("dart-slots");
@@ -1749,7 +1756,122 @@ function createPlayView(interactive = false) {
     });
   }
 
-  return { board, render };
+  /* Shows a picture of the board in board coordinates, or the drawn board
+     again when `url` is null. Hit areas stay faint over a picture, where the
+     real darts are visible. */
+  function showPhoto(url) {
+    if (url) photo.setAttribute("href", url);
+    photo.toggleAttribute("hidden", !url);
+    drawn.setAttribute("visibility", url ? "hidden" : "visible");
+    hitLayer.setAttribute("opacity", url ? 0.45 : 1);
+  }
+
+  return { board, render, showPhoto };
+}
+
+/* Output size of a flattened picture: 470 mm of board at this many px. */
+const FLAT_SIZE = 600;
+
+/* Warps one camera's frame onto the board plane, face-on with the 20 up,
+   covering the drawn board's -235..235 mm. Resolves to a PNG blob. */
+async function flattenFrame(blob, calibration) {
+  const toImage = invert3(calibration.to_board);
+  if (!toImage) return null;
+  const bitmap = await createImageBitmap(blob);
+  const source = new OffscreenCanvas(bitmap.width, bitmap.height);
+  const sourceContext = source.getContext("2d");
+  sourceContext.drawImage(bitmap, 0, 0);
+  const pixels = sourceContext.getImageData(0, 0, bitmap.width, bitmap.height).data;
+  const output = new OffscreenCanvas(FLAT_SIZE, FLAT_SIZE);
+  const outputContext = output.getContext("2d");
+  const flat = outputContext.createImageData(FLAT_SIZE, FLAT_SIZE);
+  const mmPerPx = 470 / FLAT_SIZE;
+  for (let row = 0; row < FLAT_SIZE; row += 1) {
+    /* Board y points to the 20; image rows point down. */
+    const y = 235 - (row + 0.5) * mmPerPx;
+    for (let column = 0; column < FLAT_SIZE; column += 1) {
+      const x = (column + 0.5) * mmPerPx - 235;
+      const w = toImage[2][0] * x + toImage[2][1] * y + toImage[2][2];
+      if (w <= 0) continue;
+      const u = Math.round((toImage[0][0] * x + toImage[0][1] * y + toImage[0][2]) / w);
+      const v = Math.round((toImage[1][0] * x + toImage[1][1] * y + toImage[1][2]) / w);
+      if (u < 0 || v < 0 || u >= bitmap.width || v >= bitmap.height) continue;
+      const from = (v * bitmap.width + u) * 4;
+      const to = (row * FLAT_SIZE + column) * 4;
+      flat.data[to] = pixels[from];
+      flat.data[to + 1] = pixels[from + 1];
+      flat.data[to + 2] = pixels[from + 2];
+      flat.data[to + 3] = 255;
+    }
+  }
+  outputContext.putImageData(flat, 0, 0);
+  return output.convertToBlob({ type: "image/png" });
+}
+
+/* The Live board's view: the drawn board, or one calibrated camera's
+   flattened picture, refreshed every few seconds. */
+function createBoardViewSwitch(view) {
+  const container = document.getElementById("board-view");
+  let choice = storage.get("board-view", "drawn");
+  let url = null;
+  let busy = false;
+  let shownKey = "";
+
+  const cameras = snapshot => snapshot.mode !== "live" ? [] : snapshot.config.cameras
+    .filter(camera => calibrationFor(snapshot.calibration, camera) && isStreaming(snapshot, camera.slot));
+
+  async function refresh() {
+    const snapshot = daemon.snapshot;
+    const camera = snapshot && cameras(snapshot).find(candidate => String(candidate.slot) === choice);
+    if (!camera) {
+      view.showPhoto(null);
+      return;
+    }
+    if (busy || document.hidden) return;
+    busy = true;
+    try {
+      const response = await fetch(api.snapshotUrl(camera.slot), { cache: "no-store" });
+      const flat = response.ok && await flattenFrame(await response.blob(), calibrationFor(snapshot.calibration, camera));
+      if (flat && choice === String(camera.slot)) {
+        const next = URL.createObjectURL(flat);
+        view.showPhoto(next);
+        if (url) URL.revokeObjectURL(url);
+        url = next;
+      }
+    } catch {
+      /* The next refresh tries again. */
+    } finally {
+      busy = false;
+    }
+  }
+
+  function render(snapshot) {
+    const available = cameras(snapshot);
+    if (choice !== "drawn" && !available.some(camera => String(camera.slot) === choice)) {
+      view.showPhoto(null);
+    }
+    const key = JSON.stringify([available.map(camera => camera.slot), choice]);
+    if (key === shownKey) return;
+    shownKey = key;
+    container.hidden = available.length === 0;
+    const items = [["drawn", "Drawn"], ...available.map(camera => [String(camera.slot), `Cam ${camera.slot}`])];
+    container.innerHTML = items.map(([value, label]) =>
+      `<button type="button" role="radio" aria-checked="${value === choice}" data-view="${value}">${label}</button>`).join("");
+  }
+
+  container.addEventListener("click", event => {
+    const button = event.target.closest("[data-view]");
+    if (!button) return;
+    choice = button.dataset.view;
+    storage.set("board-view", choice);
+    shownKey = "";
+    if (daemon.snapshot) render(daemon.snapshot);
+    refresh();
+  });
+  window.setInterval(() => {
+    if (choice !== "drawn") refresh();
+  }, 3000);
+  return { render, refresh };
 }
 
 /* In demo mode, clicking the board or a quick-throw button injects a throw. */
@@ -1959,9 +2081,17 @@ function initHomePage() {
     }
     document.body.classList.add("is-ready");
     const view = createPlayView();
+    const boardView = createBoardViewSwitch(view);
+    let revision = null;
     daemon.subscribe(({ snapshot: current, events }) => {
       document.getElementById("home-board-name").textContent = current.config.board.name;
       view.render(current);
+      boardView.render(current);
+      /* A new picture as soon as the visit changes. */
+      if (current.revision !== revision) {
+        revision = current.revision;
+        boardView.refresh();
+      }
       renderControls(current);
       const items = events.map((event, index) => [event, events[index - 1]?.snapshot])
         .filter(([event]) => GAME_EVENTS[event.kind])

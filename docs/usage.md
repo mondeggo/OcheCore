@@ -106,7 +106,11 @@ setup** leads back to Settings.
 
 - **Live** (`/`): Start/Stop and Reset, the current visit's three darts and total
   on a board, and a feed of game events. Until a live board has a device for every
-  camera and a calibration for each, it opens setup instead.
+  camera and a calibration for each, it opens setup instead. The switch on the
+  board shows either the drawn board or a calibrated camera's picture flattened
+  through its calibration: face-on with the 20 up, refreshed every few seconds
+  and whenever the visit changes. The dart markers sit where their segment is,
+  not where the dart is; the flattened picture shows the darts themselves.
 - **Settings** (`/settings/`): the terminal UI's settings. **Board** (its name)
   and **Network** (listen address and port), each saved with **Save**; each
   camera's device, state and calibration; and the detection speed, standby time,
