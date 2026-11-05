@@ -89,8 +89,10 @@ const ICONS = {
   rotate: '<path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/>',
   refresh: '<path d="M4 12a8 8 0 0 1 13.66-5.66L20 8m0-5v5h-5M20 12a8 8 0 0 1-13.66 5.66L4 16m0 5v-5h5"/>',
   remove: '<path d="M6 6l12 12M18 6 6 18"/>',
-  left: '<path d="M15 5l-7 7 7 7"/>',
-  right: '<path d="M9 5l7 7-7 7"/>'
+  /* Turning, not sideways: a camera may show the 20 anywhere, so a left or
+     right arrow would point the wrong way for some marks. */
+  clockwise: '<path d="M20 12a8 8 0 1 1-2.34-5.66L20 8"/><path d="M20 3v5h-5"/>',
+  anticlockwise: '<path d="M4 12a8 8 0 1 0 2.34-5.66L4 8"/><path d="M4 3v5h5"/>'
 };
 const icon = name =>
   `<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>`;
@@ -1588,8 +1590,8 @@ function initCalibrationPage() {
           <div class="orient-controls">
             <span>Turn the colours</span>
             <div class="turn-buttons" role="group" aria-label="Turn the colours on camera ${slot}">
-              <button type="button" data-turn="-1" data-camera="${slot}" aria-label="Turn anticlockwise">${icon("left")}</button>
-              <button type="button" data-turn="1" data-camera="${slot}" aria-label="Turn clockwise">${icon("right")}</button>
+              <button type="button" data-turn="-1" data-camera="${slot}" aria-label="Turn anticlockwise" title="Turn anticlockwise">${icon("anticlockwise")}</button>
+              <button type="button" data-turn="1" data-camera="${slot}" aria-label="Turn clockwise" title="Turn clockwise">${icon("clockwise")}</button>
             </div>
           </div>` : ""}
       </section>`;

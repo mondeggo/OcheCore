@@ -162,9 +162,9 @@ setup** leads back to Settings.
      new one). **On screen:** with the board empty, **Fit the wires**; a camera
      with no 20 reference yet starts from a guess near the top of its picture.
      The fitted wires are drawn in white with the 20 in red, 6 in blue, 3 in
-     orange and 11 in purple. Turn each camera's colours with its arrows until they
-     sit on those numbers, then **Save**, which moves that camera's 20 reference
-     and refits it. The arrows turn two segments at a time: calibration takes the
+     orange and 11 in purple. Turn each camera's colours with its clockwise and
+     anticlockwise buttons until they sit on those numbers, then **Save**, which moves that camera's 20 reference
+     and refits it. The buttons turn two segments at a time: calibration takes the
      20 to be a segment with a red double, so only every other segment can be it.
      **Dart at D20** works like `oche-core orient`, then calibrates. **Start over**
      repeats the steps; the saved calibration is kept until a new one succeeds.
@@ -186,7 +186,7 @@ Rotation turns the preview only; frames, hints and calibration stay in camera
 pixels. Changing a camera's device clears its 20 reference. A resolution with the
 same aspect ratio scales the reference, and any other resolution clears it.
 Removing a camera moves later cameras up one slot, together with their settings
-and 20 reference. The on-screen method and the arrows have been tested on
+and 20 reference. The on-screen method and the turn buttons have been tested on
 synthetic frames only, not yet on real captures.
 
 ## Terminal UI
