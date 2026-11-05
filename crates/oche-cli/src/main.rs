@@ -25,7 +25,7 @@ use std::{
     name = "oche-core",
     version,
     about = "OcheCore offline board control and terminal UI",
-    long_about = "OcheCore offline board control and terminal UI. Capture, vision, calibration, and Autodarts compatibility are not implemented yet. Use run --demo to exercise synthetic visits."
+    long_about = "OcheCore offline board control and terminal UI. The daemon serves the native API and the local board state of Autodarts 2.1.1 (/api/state, /api/events), which has not yet been tested with an unchanged Autodarts client. Use run --demo to exercise synthetic visits."
 )]
 struct Args {
     #[arg(short = 'c', long, global = true, value_name = "FILE")]
@@ -292,8 +292,9 @@ async fn execute(args: Args) -> Result<()> {
             "{}",
             match mode {
                 Mode::Live =>
-                    "Cameras open while the board is running. Autodarts compatibility is unavailable.",
-                _ => "Cameras are not opened in this mode. Autodarts compatibility is unavailable.",
+                    "Cameras open while the board is running. Autodarts board state: /api/state, /api/events (untested with Autodarts clients).",
+                _ =>
+                    "Cameras are not opened in this mode. Autodarts board state: /api/state, /api/events (untested with Autodarts clients).",
             }
         );
         let mut engine = Engine::new(config, store, mode, address.to_string());
@@ -563,7 +564,7 @@ async fn execute(args: Args) -> Result<()> {
                 show(&snapshot, false)?;
                 let yes_no = |v: bool| if v { "yes" } else { "no" };
                 println!(
-                    "Configuration: valid\nNative API: reachable\nCapture: {} | calibration: {} | detection: {} | Autodarts compatibility: not implemented",
+                    "Configuration: valid\nNative API: reachable\nCapture: {} | calibration: {} | detection: {} | Autodarts board state: served, untested with Autodarts clients",
                     yes_no(snapshot.capabilities.capture),
                     yes_no(snapshot.capabilities.calibration),
                     yes_no(snapshot.capabilities.vision)
