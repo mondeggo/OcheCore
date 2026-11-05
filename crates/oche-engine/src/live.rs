@@ -748,12 +748,7 @@ fn start(
                     },
                 };
                 match engine.lock() {
-                    Ok(mut engine) => {
-                        engine.observe(observation);
-                        if let Some(evidence) = evidence {
-                            engine.note_arrival(evidence);
-                        }
-                    }
+                    Ok(mut engine) => engine.observe_with(observation, evidence),
                     Err(_) => return,
                 }
             }

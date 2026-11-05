@@ -410,6 +410,13 @@ impl Engine {
 
     /// Applies a detector observation to the visit. Ignored unless running live.
     pub fn observe(&mut self, observation: Observation) {
+        self.observe_with(observation, None);
+    }
+
+    /// As [`Self::observe`], with what the cameras saw for an arrival: the
+    /// throw's event already carries its detected position, which clients
+    /// that only read events (such as Autodarts ones) need to draw the dart.
+    pub fn observe_with(&mut self, observation: Observation, evidence: Option<ArrivalEvidence>) {
         if self.mode != Mode::Live || self.state != ServiceState::Running {
             return;
         }
@@ -419,8 +426,8 @@ impl Engine {
                 self.physical_darts = Some(0);
                 "board_ready"
             }
-            Observation::Arrival(scored) => self.arrival(scored, None),
-            Observation::Uncertain(reason) => self.arrival(None, Some(reason)),
+            Observation::Arrival(scored) => self.arrival(scored, None, evidence),
+            Observation::Uncertain(reason) => self.arrival(None, Some(reason), evidence),
             Observation::Removal { empty: true } => {
                 self.last_activity = Instant::now();
                 self.clear_throws();
@@ -439,7 +446,12 @@ impl Engine {
         self.publish(kind);
     }
 
-    fn arrival(&mut self, scored: Option<(String, u16)>, reason: Option<String>) -> &'static str {
+    fn arrival(
+        &mut self,
+        scored: Option<(String, u16)>,
+        reason: Option<String>,
+        evidence: Option<ArrivalEvidence>,
+    ) -> &'static str {
         self.last_activity = Instant::now();
         self.physical_darts = self.physical_darts.map(|n| n.saturating_add(1));
         self.scene = SceneState::DartsPresent;
@@ -457,9 +469,9 @@ impl Engine {
             corrected: false,
             uncertain,
             uncertainty: reason,
-            position: None,
+            position: evidence.as_ref().and_then(|e| e.position),
         });
-        self.evidence.push(None);
+        self.evidence.push(evidence);
         self.accuracy.darts += 1;
         if uncertain {
             self.accuracy.uncertain += 1;
@@ -485,18 +497,6 @@ impl Engine {
             .save_accuracy(self.config.board.id, &self.accuracy)
         {
             eprintln!("Could not save the accuracy count: {e:#}");
-        }
-    }
-
-    /// Attaches what the cameras saw to the throw the last observation
-    /// added, and its detected position. Not an event: the throw's own event
-    /// already went out, and the position only refines how it is drawn.
-    pub fn note_arrival(&mut self, evidence: ArrivalEvidence) {
-        if let (Some(throw), Some(slot)) = (self.throws.last_mut(), self.evidence.last_mut())
-            && slot.is_none()
-        {
-            throw.position = evidence.position;
-            *slot = Some(evidence);
         }
     }
 
@@ -667,14 +667,20 @@ mod tests {
         let (dir, mut e) = engine(Mode::Live);
         e.command(Command::Start).unwrap();
         e.observe(Observation::Baseline);
-        e.observe(Observation::Arrival(Some(("S1".into(), 1))));
-        e.note_arrival(ArrivalEvidence {
-            position: Some([20.0, 60.0]),
-            detection: "arrival; impact S1".into(),
-            before: vec![(1, b"before".to_vec())],
-            after: vec![(1, b"after".to_vec())],
-        });
-        assert_eq!(e.snapshot().throws[0].position, Some([20.0, 60.0]));
+        let mut events = e.subscribe().1;
+        e.observe_with(
+            Observation::Arrival(Some(("S1".into(), 1))),
+            Some(ArrivalEvidence {
+                position: Some([20.0, 60.0]),
+                detection: "arrival; impact S1".into(),
+                before: vec![(1, b"before".to_vec())],
+                after: vec![(1, b"after".to_vec())],
+            }),
+        );
+        // The throw's own event carries the detected position.
+        let event = events.try_recv().unwrap();
+        assert_eq!(event.kind, "throw_accepted");
+        assert_eq!(event.snapshot.throws[0].position, Some([20.0, 60.0]));
         let correct = |e: &mut Engine, label: &str, position| {
             let s = e.snapshot();
             e.command(Command::CorrectThrow {
