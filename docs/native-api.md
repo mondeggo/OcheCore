@@ -117,12 +117,17 @@ read only. Listening changes require restart; `restart_required` reports this.
 the container image sets: the port mapping decides where the board is reachable,
 so `server.bind` and `server.port` changes return 400 and change nothing.
 
-Snapshots include configuration, API version, session ID, state revision, event
+Snapshots include configuration, API version, OcheCore's `version`, session ID, state revision, event
 sequence, monotonic uptime, service/scene state, mode, accepted throws, physical
 occupancy, capability flags, per-camera status (`off`, `starting`, `streaming`,
 `error` with delivered FPS and message), the current calibration record, the
 `accuracy` count, and `motion`: whether the cameras currently see
-movement (not published as an event; read it from the snapshot). Clients derive a
+movement (not published as an event; read it from the snapshot). `resources`
+holds the daemon's own `cpu_percent` (CPU time over the last second, all
+threads, as a percentage of one core as `top` shows it, so up to 400 on four
+cores; `null` until the second sample) and `memory_bytes` (resident memory),
+read from `/proc` once a second; it is `null` outside Linux and is not published
+as an event either. These are the process's own figures, not a benchmark. Clients derive a
 board activity from these fields (stopped, standby, starting, error, needs
 setup, needs calibration, motion, ready, taking out, take out darts); the
 `oche-domain` crate provides `Snapshot::activity` for this.

@@ -568,6 +568,9 @@ pub struct Capabilities {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Snapshot {
     pub api_version: u32,
+    /// OcheCore's release version, such as `0.1.5`.
+    #[serde(default)]
+    pub version: String,
     pub config: Config,
     pub session_id: Uuid,
     pub revision: u64,
@@ -595,6 +598,20 @@ pub struct Snapshot {
     pub motion: bool,
     #[serde(default)]
     pub accuracy: Accuracy,
+    /// The daemon's own CPU and memory use; `None` where they cannot be read
+    /// (outside Linux). Not published as an event.
+    #[serde(default)]
+    pub resources: Option<Resources>,
+}
+
+/// What the daemon process uses, all its threads included.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Resources {
+    /// CPU time over the last second as a percentage of one core, as `top`
+    /// shows it: up to 400 on four cores. `None` until a second sample.
+    pub cpu_percent: Option<f64>,
+    /// Resident memory (RSS) in bytes.
+    pub memory_bytes: u64,
 }
 
 /// How a consumer should present a [`BoardActivity`].
@@ -892,6 +909,7 @@ mod tests {
         }
         Snapshot {
             api_version: 1,
+            version: String::new(),
             config,
             session_id: Uuid::nil(),
             revision: 1,
@@ -923,6 +941,7 @@ mod tests {
             calibration: None,
             motion: false,
             accuracy: Accuracy::default(),
+            resources: None,
         }
     }
 

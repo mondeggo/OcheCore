@@ -392,11 +392,15 @@ pub async fn serve(
     let tick_service = service.clone();
     let ticker = tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(1));
+        let mut sampler = oche_engine::resources::Sampler::default();
         loop {
             interval.tick().await;
+            // Read outside the command lock; a few small /proc files.
+            let resources = sampler.sample();
             let _ = tick_service
-                .access(|e| {
+                .access(move |e| {
                     e.tick(Instant::now());
+                    e.set_resources(resources);
                     Ok(())
                 })
                 .await;

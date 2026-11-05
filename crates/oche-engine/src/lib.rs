@@ -1,6 +1,7 @@
 //! Serialized control state, independent of camera capture and HTTP transports.
 pub mod corrections;
 pub mod live;
+pub mod resources;
 pub mod storage;
 
 pub use corrections::ArrivalEvidence;
@@ -42,6 +43,7 @@ pub struct Engine {
     calibration: Option<CalibrationRecord>,
     cameras: Vec<CameraStatus>,
     motion: bool,
+    resources: Option<Resources>,
 }
 
 /// What the live detector saw, already scored on the measured board.
@@ -117,6 +119,7 @@ impl Engine {
             calibration,
             cameras: Vec::new(),
             motion: false,
+            resources: None,
         }
     }
 
@@ -156,6 +159,7 @@ impl Engine {
     pub fn snapshot(&self) -> Snapshot {
         Snapshot {
             api_version: 1,
+            version: env!("CARGO_PKG_VERSION").into(),
             config: self.config.clone(),
             session_id: self.session_id,
             revision: self.revision,
@@ -181,6 +185,7 @@ impl Engine {
             calibration: self.calibration.clone(),
             motion: self.motion,
             accuracy: self.accuracy.clone(),
+            resources: self.resources,
         }
     }
 
@@ -526,6 +531,12 @@ impl Engine {
     /// it changes constantly and consumers read it from the snapshot.
     pub fn set_motion(&mut self, motion: bool) {
         self.motion = motion;
+    }
+
+    /// The daemon's latest CPU and memory use. Not published as an event,
+    /// like motion: it changes every second.
+    pub fn set_resources(&mut self, resources: Option<Resources>) {
+        self.resources = resources;
     }
 
     /// Updates live camera status; publishes only when a state or error changes.
