@@ -7,14 +7,35 @@
 
 const SEGMENTS = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5];
 /* Nominal WDF radii in millimetres, like BoardDimensions::wdf in oche-domain. */
-const R = {
-  bull: 6.35,
-  outerBull: 15.9,
-  tripleIn: 99.4,
-  tripleOut: 107.4,
-  doubleIn: 162,
-  doubleOut: 170
+const WDF_BOARD = {
+  inner_bull: 6.35,
+  outer_bull: 15.9,
+  treble_inner: 99.4,
+  treble_outer: 107.4,
+  double_inner: 162,
+  double_outer: 170
 };
+/* The radii boards are drawn and clicks scored with: the calibration's
+   measured board when there is one, as the detector scores, else WDF. */
+const R = {};
+
+/* Returns whether the radii changed, so drawn boards can be redrawn. */
+function useBoard(board = WDF_BOARD) {
+  const next = {
+    bull: board.inner_bull,
+    outerBull: board.outer_bull,
+    tripleIn: board.treble_inner,
+    tripleOut: board.treble_outer,
+    doubleIn: board.double_inner,
+    doubleOut: board.double_outer
+  };
+  const changed = Object.keys(next).some(key => next[key] !== R[key]);
+  Object.assign(R, next);
+  return changed;
+}
+useBoard();
+
+const boardRadii = () => [R.bull, R.outerBull, R.tripleIn, R.tripleOut, R.doubleIn, R.doubleOut];
 const COLORS = {
   dark: "#20241f",
   light: "#efe2bd",
@@ -178,9 +199,7 @@ function drawBoard(parent, map = identity, options = {}) {
   return group;
 }
 
-const NOMINAL_RADII = [R.bull, R.outerBull, R.tripleIn, R.tripleOut, R.doubleIn, R.doubleOut];
-
-function drawWires(parent, map = identity, attrs = {}, radii = NOMINAL_RADII) {
+function drawWires(parent, map = identity, attrs = {}, radii = boardRadii()) {
   const group = svgEl("g", {
     fill: "none",
     stroke: COLORS.wire,
@@ -691,29 +710,92 @@ function setNextEnabled(link, enabled, message) {
 
 const MODE_NAMES = { live: "Live", demo: "Demo mode", control_only: "Controls only" };
 
+/* Status-bar icons, 16 × 16, drawn in the text colour. */
+const STATUS_ICONS = {
+  start: '<path d="M5 3.5v9l7-4.5z" fill="currentColor"/>',
+  stop: '<rect x="4" y="4" width="8" height="8" rx="1.2" fill="currentColor"/>',
+  reset: '<path d="M8 3.5 3.5 9h9z" fill="currentColor"/><rect x="3.5" y="10.5" width="9" height="2" rx=".6" fill="currentColor"/>',
+  calibrate: '<g fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="4.5"/><path d="M8 1.5v3M8 11.5v3M1.5 8h3M11.5 8h3"/></g>',
+  camera: '<g fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M2 5.5h2.6L6 3.5h4l1.4 2H14v7H2z"/><circle cx="8" cy="9" r="2.2"/></g>',
+  cpu: '<g fill="none" stroke="currentColor" stroke-width="1.4"><rect x="4" y="4" width="8" height="8" rx="1"/><path d="M6.5 1.5V4M9.5 1.5V4M6.5 12v2.5M9.5 12v2.5M1.5 6.5H4M1.5 9.5H4M12 6.5h2.5M12 9.5h2.5"/></g>',
+  memory: '<g fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="4.5" width="13" height="6" rx="1"/><path d="M4.5 10.5v2M8 10.5v2M11.5 10.5v2"/></g>'
+};
+const statusIcon = name =>
+  `<svg class="status-icon" viewBox="0 0 16 16" aria-hidden="true">${STATUS_ICONS[name]}</svg>`;
+
+/* Every page's footer gets the same controls and readouts, like the
+   Autodarts status bar: board controls beside the state, then camera FPS,
+   CPU, memory and version on the right. */
+function buildStatusBar(bar) {
+  if (bar.dataset.built) return;
+  bar.dataset.built = "true";
+  const action = (attrs, name, label) =>
+    `<button class="status-action" type="button" ${attrs} title="${label}" aria-label="${label}">${statusIcon(name)}</button>`;
+  bar.querySelector("#status-state").insertAdjacentHTML("afterend", `
+    <span class="status-actions" role="group" aria-label="Board controls">
+      ${action('data-command="start" data-status-when="stopped" hidden', "start", "Start the board")}
+      ${action('data-command="stop" data-status-when="running" hidden', "stop", "Stop the board")}
+      ${action('data-command="reset"', "reset", "Reset the visit")}
+      <a class="status-action" id="status-calibrate" href="/setup/calibrate.html" title="Calibrate the cameras" aria-label="Calibrate the cameras" hidden>${statusIcon("calibrate")}</a>
+    </span>`);
+  const right = document.createElement("span");
+  right.className = "status-right";
+  right.innerHTML = `
+    <span class="status-item" id="status-cpu" hidden>${statusIcon("cpu")}<span></span></span>
+    <span class="status-item" id="status-memory" hidden>${statusIcon("memory")}<span></span></span>`;
+  right.prepend(bar.querySelector("#status-cameras"));
+  right.append(bar.querySelector("#status-connection"));
+  bar.append(right);
+}
+
 function renderStatusBar({ snapshot, connected }) {
   const state = document.getElementById("status-state");
   const cameraText = document.getElementById("status-cameras");
   const address = document.getElementById("status-address");
   const connection = document.getElementById("status-connection");
   if (!state) return;
+  buildStatusBar(state.closest(".status-bar"));
   if (!snapshot) {
     state.textContent = "Connecting";
     state.dataset.tone = "busy";
     if (connection) connection.textContent = "Waiting for OcheCore…";
     return;
   }
+  const running = snapshot.state === "running";
+  document.querySelectorAll("[data-status-when]").forEach(button => {
+    button.hidden = (button.dataset.statusWhen === "running") !== running;
+  });
+  document.getElementById("status-calibrate").hidden = snapshot.mode !== "live";
+  const resources = snapshot.resources;
+  const cpu = document.getElementById("status-cpu");
+  cpu.hidden = resources?.cpu_percent == null;
+  if (!cpu.hidden) {
+    cpu.lastElementChild.textContent = `${resources.cpu_percent.toFixed(0)} %`;
+    cpu.title = "OcheCore's CPU use over the last second, as a share of one core";
+  }
+  const memory = document.getElementById("status-memory");
+  memory.hidden = !resources;
+  if (resources) {
+    memory.lastElementChild.textContent = `${(resources.memory_bytes / 1048576).toFixed(0)} MB`;
+    memory.title = "OcheCore's resident memory";
+  }
   const activity = boardActivity(snapshot);
   state.textContent = connected ? activity.label : "Offline";
   state.dataset.tone = connected ? LEVEL_TONES[activity.level] : "problem";
   state.title = connected ? sentence(activity.detail) : "The daemon is not reachable; retrying";
   if (cameraText) {
+    /* Each camera's delivered FPS in slot order, as Autodarts shows them;
+       a dash for a camera that is not streaming. */
     const count = snapshot.config.cameras.length;
-    const streaming = snapshot.cameras.filter(status => status.state === "streaming");
-    const fps = streaming.length
-      ? ` · ${(streaming.reduce((sum, status) => sum + status.fps, 0) / streaming.length).toFixed(0)} fps`
-      : "";
-    cameraText.textContent = `${count} ${count === 1 ? "camera" : "cameras"}${fps}`;
+    const fps = snapshot.config.cameras.map(camera => {
+      const status = snapshot.cameras.find(item => item.slot === camera.slot);
+      return status?.state === "streaming" ? status.fps.toFixed(0) : "–";
+    });
+    const live = snapshot.cameras.some(status => status.state === "streaming");
+    cameraText.innerHTML = `${statusIcon("camera")}<span>${live ? `${fps.join(" ")} fps` : "off"}</span>`;
+    cameraText.title = `${count} ${count === 1 ? "camera" : "cameras"}: ${live
+      ? "frames per second each camera delivers"
+      : "not capturing (stopped, standby or demo mode)"}`;
   }
   if (address) {
     const { bind, port } = snapshot.config.server;
@@ -723,7 +805,10 @@ function renderStatusBar({ snapshot, connected }) {
       : snapshot.listening_on;
   }
   if (connection) {
-    connection.textContent = connected ? MODE_NAMES[snapshot.mode] || snapshot.mode : "Disconnected · retrying";
+    const mode = MODE_NAMES[snapshot.mode] || snapshot.mode;
+    connection.textContent = connected
+      ? (snapshot.version ? `${mode} · v${snapshot.version}` : mode)
+      : "Disconnected · retrying";
   }
 }
 
@@ -1708,7 +1793,7 @@ const dartPoint = dart => dart.position ? [dart.position[0], -dart.position[1]] 
    the board, corrects it (correct_throw with that position). */
 function createPlayView(interactive = false) {
   const board = document.getElementById("throw-board");
-  const drawn = drawBoard(board, identity, { numberSize: 22 });
+  let drawn = drawBoard(board, identity, { numberSize: 22 });
   /* A flattened camera picture shown instead of the drawn board, cut to the
      drawn board's outline. */
   const clip = svgEl("clipPath", { id: "photo-clip" }, svgEl("defs", {}, board));
@@ -1726,6 +1811,12 @@ function createPlayView(interactive = false) {
 
   function render(snapshot) {
     const { throws } = snapshot;
+    if (useBoard(snapshot.calibration?.board)) {
+      const fresh = drawBoard(board, identity, { numberSize: 22 });
+      fresh.setAttribute("visibility", drawn.getAttribute("visibility") || "visible");
+      drawn.replaceWith(fresh);
+      drawn = fresh;
+    }
     if (correcting !== null && !throws[correcting]) correcting = null;
     board.classList.toggle("is-correcting", correcting !== null);
     slots.innerHTML = [0, 1, 2].map(index => {
@@ -2269,9 +2360,30 @@ const GAME_EVENTS = {
   calibration_updated: () => ["Cameras recalibrated", "", ""]
 };
 
+/* Hiding the game events gives the board the whole width; each browser
+   remembers its choice. */
+function initEventsToggle() {
+  const layout = document.querySelector(".home-layout");
+  const panel = document.getElementById("event-panel");
+  const toggle = document.getElementById("events-toggle");
+  const apply = hidden => {
+    panel.hidden = hidden;
+    layout.classList.toggle("is-events-hidden", hidden);
+    toggle.setAttribute("aria-expanded", String(!hidden));
+    toggle.textContent = hidden ? "Show events" : "Hide events";
+  };
+  apply(storage.get("events-hidden", false) === true);
+  toggle.addEventListener("click", () => {
+    const hidden = !panel.hidden;
+    storage.set("events-hidden", hidden);
+    apply(hidden);
+  });
+}
+
 function initHomePage() {
   const feed = document.getElementById("event-feed");
   const empty = document.getElementById("event-empty");
+  initEventsToggle();
   whenReady(snapshot => {
     if (!isSetUp(snapshot)) {
       window.location.replace(`setup/${STEP_PAGES[firstOpenStep(snapshot) - 1]}`);

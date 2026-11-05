@@ -212,12 +212,22 @@ p {
   width: 2.4rem;
   height: 2.4rem;
   place-items: center;
-  border: 1.5px solid var(--ink);
   border-radius: 50%;
+  color: var(--ink);
   background: var(--paper);
-  font-family: var(--display);
-  font-weight: 900;
   text-decoration: none;
+}
+
+/* GitHub's mark (Octicons, MIT; licenses/README.md). */
+.help-link svg {
+  width: 1.35rem;
+  height: 1.35rem;
+}
+
+.help-link:hover,
+.help-link:focus-visible {
+  color: var(--paper);
+  background: var(--ink);
 }
 
 /* Section links: Live, Settings, Debug. */
@@ -1195,6 +1205,11 @@ select {
   gap: 1.2rem;
 }
 
+/* Events hidden: the board takes the whole width. */
+.home-layout.is-events-hidden {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .home-play {
   display: flex;
   min-height: 0;
@@ -1488,6 +1503,62 @@ select {
 
 .status-preview {
   margin-left: auto;
+}
+
+/* Board controls beside the state, and readouts on the right. */
+.status-actions,
+.status-right,
+.status-item {
+  display: inline-flex;
+  align-items: center;
+}
+
+.status-actions {
+  gap: 0.15rem;
+  margin-left: -0.6rem;
+}
+
+.status-right {
+  gap: 1.2rem;
+  margin-left: auto;
+}
+
+.status-right .status-preview {
+  margin-left: 0;
+}
+
+.status-item {
+  gap: 0.35rem;
+}
+
+.status-icon {
+  width: 0.85rem;
+  height: 0.85rem;
+  flex: none;
+}
+
+.status-action {
+  display: inline-grid;
+  width: 1.5rem;
+  height: 1.5rem;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 0.4rem;
+  color: rgba(255, 253, 247, 0.72);
+  background: transparent;
+  cursor: pointer;
+}
+
+.status-action:hover,
+.status-action:focus-visible {
+  color: var(--ink);
+  background: var(--lime);
+}
+
+.status-action:disabled {
+  opacity: 0.4;
+  cursor: wait;
 }
 
 .toast {

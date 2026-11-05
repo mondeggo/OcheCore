@@ -24,3 +24,9 @@ Their manifests offer MIT OR Apache-2.0; we include the unchanged MIT option:
 
 These commits match the respective crates' `.cargo_vcs_info.json`; fallbacks
 are restricted to the exact package versions above.
+
+`octicons-19.15.0-LICENSE` is the unchanged MIT license of
+[`@primer/octicons` 19.15.0](https://unpkg.com/@primer/octicons@19.15.0/LICENSE).
+The browser UI embedded in the executable inlines that release's `mark-github-16`
+path as the link to the OcheCore repository, so the notice generator includes
+this license for every target.

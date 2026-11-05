@@ -124,7 +124,10 @@ setup** leads back to Settings.
 
 - **Live** (`/`): Start/Stop and Reset, the current visit's three darts and total
   on a board, and a feed of game events headed by the
-  [accuracy count](#accuracy-count) (hover for the details). Until a live board has a device for every
+  [accuracy count](#accuracy-count) (hover for the details). **Hide events** gives
+  the board the whole width; each browser remembers the choice. The drawn board
+  uses the calibration's measured ring radii, as scoring does (WDF nominal ones
+  before calibration). Until a live board has a device for every
   camera and a calibration for each, it opens setup instead. The switch on the
   board shows either the drawn board or a calibrated camera's picture flattened
   through its calibration: face-on with the 20 up, refreshed every few seconds
@@ -169,6 +172,11 @@ setup** leads back to Settings.
   board and **Cameras**: a still picture from each camera, retaken only after a
   dart, a takeout, the board becoming ready or a calibration, or with **Take
   pictures**, so the cameras are not streamed to the browser.
+
+Every page's status bar shows the board state with Start/Stop, Reset and (live
+mode) Calibrate buttons beside it, and on the right each camera's FPS (`off`
+when not capturing), OcheCore's CPU (share of one core) and memory, the mode and
+the version. The GitHub mark in the header opens the repository.
 
 Rotation turns the preview only; frames, hints and calibration stay in camera
 pixels. Changing a camera's device clears its 20 reference. A resolution with the

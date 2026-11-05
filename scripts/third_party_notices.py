@@ -43,6 +43,9 @@ def main():
     Text().feed(rust_notices.read_text())
     if "musl" in args.target:
         sections += ["=" * 72, "musl C runtime", Path("licenses/musl-COPYRIGHT").read_text()]
+    # The browser UI embedded in the executable draws GitHub's mark.
+    sections += ["=" * 72, "Octicons 19.15.0 (GitHub mark in the browser UI)",
+                 Path("licenses/octicons-19.15.0-LICENSE").read_text()]
     for package_id in sorted(visited, key=lambda p: (packages[p]["name"], packages[p]["version"])):
         package = packages[package_id]
         if package["source"] is None:
