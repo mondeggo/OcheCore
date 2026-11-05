@@ -1,7 +1,7 @@
-//! Replays a captured Autodarts 2.0.2 session through OcheCore's visit state
+//! Replays a captured Autodarts 2.1.1 session through OcheCore's visit state
 //! and requires the same `board.state` sequence.
 //!
-//! `fixtures/autodarts-2.0.2-board-state.jsonl` holds the 123 distinct states
+//! `fixtures/autodarts-2.1.1-board-state.jsonl` holds the 123 distinct states
 //! of `autodarts-20261105T181739178120Z-48906701.jsonl`, which Oche recorded
 //! from the installed board on 2026-11-05 (18 visits, 53 darts), with times in
 //! seconds from the first state. The darts' labels and positions are injected
@@ -13,7 +13,7 @@ use oche_engine::{Engine, storage::Store};
 use tokio::sync::broadcast::Receiver;
 
 fn fixture() -> Vec<BoardState> {
-    include_str!("fixtures/autodarts-2.0.2-board-state.jsonl")
+    include_str!("fixtures/autodarts-2.1.1-board-state.jsonl")
         .lines()
         .map(|line| {
             let mut entry: serde_json::Value = serde_json::from_str(line).unwrap();

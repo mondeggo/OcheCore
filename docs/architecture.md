@@ -67,7 +67,7 @@ and compatibility claims; it does not gate the native control foundation.
   isolates the V4L2 discovery ioctl boundary. Musl is the release
   C runtime; there is no OpenCV, camera SDK, or decoder FFI yet.
 - **Autodarts board state (2026-11-05):** `oche-autodarts` translates native
-  events into the states of one captured Autodarts 2.0.2 session, without I/O,
+  events into the states of one captured Autodarts 2.1.1 session, without I/O,
   so a contract test can replay that capture through the engine. One
   translator task in `oche-api` serves polls and sockets from the same state.
   The capture's client (Oche) reads `/api/events` as a WebSocket, so axum's

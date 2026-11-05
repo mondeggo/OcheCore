@@ -1,5 +1,5 @@
 //! Versioned native HTTP API, the browser UI that uses it, and the local
-//! board state of Autodarts 2.0.2 (`/api/state`, `/api/events`), built by
+//! board state of Autodarts 2.1.1 (`/api/state`, `/api/events`), built by
 //! `oche-autodarts` from the native events.
 mod cameras;
 mod ui;

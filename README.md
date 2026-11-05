@@ -50,7 +50,7 @@ fusion, a board-state indicator, diagnostics, and an explicit synthetic demo mod
 **Not verified:** scoring accuracy with real throws. The detection and
 calibration methods are tested on synthetic images and a few recordings only;
 there are no published accuracy numbers. Autodarts' local board state
-(`/api/state`, `/api/events`) is served as captured from one Autodarts 2.0.2
+(`/api/state`, `/api/events`) is served as captured from one Autodarts 2.1.1
 session; no unchanged Autodarts client has been run against it yet. See [the roadmap](docs/roadmap.md) and
 [discovery notes](docs/discovery.md).
 

@@ -173,7 +173,7 @@ Shutdown closes streams and gives HTTP connections at most three seconds to fini
 
 ## Autodarts local board state
 
-For clients written against a local Autodarts 2.0.2 board, the native listener
+For clients written against a local Autodarts 2.1.1 board, the native listener
 also serves the board state that Autodarts sends, built from the native events
 by the `oche-autodarts` crate. It follows one captured session
 ([discovery](discovery.md#compatibility-evidence)) and has not yet been tested

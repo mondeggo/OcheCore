@@ -39,7 +39,8 @@ sees a dart only as a line along its shaft, so setup asks for two to four.
 "Same API as Autodarts" must mean the same observable protocol for the target
 integrations, not merely similarly named endpoints. Autodarts documentation
 distinguishes earlier local Board Manager releases from version 2; the board's
-supervisor reports Autodarts 2.0.2 (see [discovery](discovery.md)). The installed
+supervisor reported Autodarts 2.0.2 on 2026-10-29, and its local page showed 2.1.1
+when the board state was captured on 2026-11-05 (see [discovery](discovery.md)). The installed
 headless board offers `run`, `remote` and `update` with `--port`, `--host` and
 `--config`, which OcheCore's CLI mirrors.
 

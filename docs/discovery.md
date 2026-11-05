@@ -112,12 +112,13 @@ and client code before treating any route or payload as a contract.
 
 | Integration | Version/commit | Autodarts profile | Fixtures | Verification |
 | --- | --- | --- | --- | --- |
-| Oche | `mondeggo/oche` `effb625` (0.3.0) | Autodarts 2.0.2 local `board.state` | `crates/oche-autodarts/tests/fixtures` | Contract test; unchanged client not yet run, and its local-game parser does not read the observed throws (below) |
+| Oche | `mondeggo/oche` `effb625` (0.3.0) | Autodarts 2.1.1 local `board.state` | `crates/oche-autodarts/tests/fixtures` | Contract test; unchanged client not yet run, and its local-game parser does not read the observed throws (below) |
 | Additional clients | To identify | Unknown | Missing | Untested |
 
 Local board-state capture (2026-11-05). Oche's opt-in raw recorder saved
 `autodarts-20261105T181739178120Z-48906701.jsonl`: 263 states in 6.3 minutes
-from the installed Autodarts board, 18 visits and 53 darts, read by Oche's
+from the installed Autodarts board (its local page at port 3180 showed
+v2.1.1 the same day), 18 visits and 53 darts, read by Oche's
 `LocalBoardConnection` (`app/core/board/local.py` at `effb625`). That client
 reads `GET /api/state` once as a baseline, then `WS /api/events?type=state`
 packets `{"type":"state","data":{...}}`, polling `GET /api/state` again after

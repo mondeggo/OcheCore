@@ -1,4 +1,4 @@
-//! The local board state of Autodarts 2.0.2, built from native events.
+//! The local board state of Autodarts 2.1.1, built from native events.
 //!
 //! The payload and its sequence follow a capture of the installed board's
 //! `board.state` feed as Oche received it (2026-11-05, see `docs/discovery.md`):
