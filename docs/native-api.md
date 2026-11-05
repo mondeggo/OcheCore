@@ -1,6 +1,7 @@
 # Native API v1
 
-This is OcheCore's native protocol, separate from future Autodarts compatibility.
+This is OcheCore's native protocol. The same listener also serves Autodarts'
+[local board state](#autodarts-local-board-state), kept separate from it.
 Default address: `127.0.0.1:5180`. HTTP authentication and TLS are not implemented;
 expose it only on a trusted network or behind appropriate access controls.
 
@@ -164,3 +165,43 @@ Errors contain `code` and `message`. Relevant statuses: 400 invalid request,
 unavailable feature, 503 busy,
 500 storage/internal failure. Rejected operations do not publish success events.
 Shutdown closes streams and gives HTTP connections at most three seconds to finish.
+
+## Autodarts local board state
+
+For clients written against a local Autodarts 2.0.2 board, the native listener
+also serves the board state that Autodarts sends, built from the native events
+by the `oche-autodarts` crate. It follows one captured session
+([discovery](discovery.md#compatibility-evidence)) and has not yet been tested
+with an unchanged client, so `capabilities.autodarts_compatibility` stays
+`false`.
+
+| Method | Path | Behavior |
+| --- | --- | --- |
+| GET | `/api/state` | Current board state |
+| GET | `/api/events` | WebSocket; each change as `{"type":"state","data":<board state>}`, nothing on connect. The `type=state` query is accepted and not required |
+
+```json
+{"connected":true,"event":"throwDetected","running":true,"status":"throw",
+ "throws":[{"bed":"Triple","bouncer":false,"coordsX":-0.0098,"coordsY":0.5761,
+            "failed":false,"method":"OcheCore","multiplier":3,
+            "segmentName":"T20","segmentNumber":20}]}
+```
+
+Coordinates are fractions of 170 mm on the native axes. A visit reads
+`throwDetected` with status `throw`, status `takeout` at three darts, then
+`takeoutStarted`/`takeoutInProgress` with the darts still listed and
+`takeoutFinished`/`throw` with none. OcheCore sees a quick takeout only when the
+board is empty, so it sends both takeout states at that moment; Autodarts sent
+`takeoutStarted` 0.7–4.3 s earlier. A partial takeout sends `takeoutStarted` when
+it happens. `reset` sends `manualReset`; `start` and a new calibration send
+`calibrationFinished` once darts can be scored. `running` is `false` when
+stopped or in standby, which these clients cannot wake.
+
+Chosen here because the capture does not show them: `method` is `OcheCore`;
+bulls are `S25`/`D25` with beds `SingleBull`/`DoubleBull`; misses are bed
+`Outside`, multiplier 0, named after the segment beside them (`M3`), as in an
+Autodarts cloud capture; a dart OcheCore could not place is such a miss with
+`failed: true`, number 0 and null coordinates; darts without a detected position
+are placed in the middle of their bed. The state while stopped keeps the visit's
+status. Autodarts' own `manualReset` about 2 s after each takeout is not
+reproduced.

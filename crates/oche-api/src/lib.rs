@@ -1,10 +1,15 @@
-//! Versioned native HTTP API and the browser UI that uses it. No Autodarts
-//! routes are emulated here.
+//! Versioned native HTTP API, the browser UI that uses it, and the local
+//! board state of Autodarts 2.0.2 (`/api/state`, `/api/events`), built by
+//! `oche-autodarts` from the native events.
 mod cameras;
 mod ui;
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, State, rejection::JsonRejection},
+    extract::{
+        DefaultBodyLimit, State,
+        rejection::JsonRejection,
+        ws::{Message, WebSocket, WebSocketUpgrade},
+    },
     http::{Method, StatusCode, Uri},
     response::{
         IntoResponse, Response, Sse,
@@ -13,6 +18,7 @@ use axum::{
     routing::{get, post},
 };
 use futures_util::Stream;
+use oche_autodarts::{BoardState, Profile};
 use oche_domain::*;
 use oche_engine::{Engine, error, live::Pipeline};
 use std::{
@@ -35,6 +41,15 @@ pub struct Service {
     camera_probe: Arc<Semaphore>,
     camera_cache: Arc<Mutex<Option<(Instant, CameraInventory)>>>,
     pipeline: Option<Arc<Pipeline>>,
+    autodarts: Arc<Autodarts>,
+}
+
+/// The Autodarts board state, shared by polls and sockets so they agree.
+struct Autodarts {
+    current: Mutex<BoardState>,
+    states: broadcast::Sender<BoardState>,
+    /// Taken by `serve`, which translates the native events from then on.
+    pending: Mutex<Option<(Profile, broadcast::Receiver<NativeEvent>)>>,
 }
 
 impl Service {
@@ -44,8 +59,19 @@ impl Service {
 
     /// A service over an engine that a live camera pipeline also observes.
     pub fn shared(engine: Arc<Mutex<Engine>>, pipeline: Option<Arc<Pipeline>>) -> Self {
+        let (initial, receiver) = engine
+            .lock()
+            .expect("command authority poisoned before the service started")
+            .subscribe();
+        let profile = Profile::new(&initial.snapshot);
+        let autodarts = Arc::new(Autodarts {
+            current: Mutex::new(profile.current().clone()),
+            states: broadcast::channel(64).0,
+            pending: Mutex::new(Some((profile, receiver))),
+        });
         Self {
             pipeline,
+            autodarts,
             engine,
             requests: Arc::new(Semaphore::new(32)),
             subscribers: Arc::new(Semaphore::new(16)),
@@ -108,6 +134,8 @@ pub fn router(service: Service) -> Router {
         .route("/api/v1/command", post(command))
         .route("/api/v1/events", get(events))
         .route("/api/v1/events/recent", get(history))
+        .route("/api/state", get(autodarts_state))
+        .route("/api/events", get(autodarts_events))
         .fallback(fallback)
         .layer(DefaultBodyLimit::max(16 * 1024))
         .with_state(service)
@@ -289,11 +317,78 @@ async fn events(
     Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(10))))
 }
 
+async fn autodarts_state(State(service): State<Service>) -> Json<BoardState> {
+    Json(service.autodarts.current.lock().unwrap().clone())
+}
+
+/// Each change as `{"type":"state","data":{...}}`, the envelope Autodarts
+/// clients read from `/api/events?type=state`; nothing is sent on connect, so
+/// clients take their baseline from `/api/state`.
+async fn autodarts_events(
+    State(service): State<Service>,
+    upgrade: WebSocketUpgrade,
+) -> Result<Response, Failure> {
+    let permit = service
+        .subscribers
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| Failure(error("busy", "maximum of 16 event subscribers reached")))?;
+    let mut states = service.autodarts.states.subscribe();
+    let mut shutdown = service.shutdown.subscribe();
+    Ok(upgrade.on_upgrade(move |mut socket: WebSocket| async move {
+        let _permit = permit;
+        loop {
+            let state = tokio::select! {
+                _ = shutdown.changed() => break,
+                incoming = socket.recv() => match incoming {
+                    Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
+                    Some(Ok(_)) => continue,
+                },
+                state = states.recv() => match state {
+                    Ok(state) => state,
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        service.autodarts.current.lock().unwrap().clone()
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                },
+            };
+            let packet = serde_json::json!({"type": "state", "data": state}).to_string();
+            if socket.send(Message::Text(packet.into())).await.is_err() {
+                break;
+            }
+        }
+    }))
+}
+
+/// Translates native events into Autodarts states until the engine closes.
+fn translate(service: Service) -> Option<tokio::task::JoinHandle<()>> {
+    let (mut profile, mut events) = service.autodarts.pending.lock().unwrap().take()?;
+    Some(tokio::spawn(async move {
+        loop {
+            let states = match events.recv().await {
+                Ok(event) => profile.apply(&event),
+                Err(broadcast::error::RecvError::Lagged(_)) => {
+                    match service.access(|e| Ok(e.snapshot())).await {
+                        Ok(snapshot) => profile.resync(&snapshot),
+                        Err(_) => continue,
+                    }
+                }
+                Err(broadcast::error::RecvError::Closed) => break,
+            };
+            for state in states {
+                *service.autodarts.current.lock().unwrap() = state.clone();
+                let _ = service.autodarts.states.send(state);
+            }
+        }
+    }))
+}
+
 pub async fn serve(
     listener: TcpListener,
     service: Service,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> std::io::Result<()> {
+    let translator = translate(service.clone());
     let tick_service = service.clone();
     let ticker = tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(1));
@@ -325,6 +420,9 @@ pub async fn serve(
         }
     };
     ticker.abort();
+    if let Some(translator) = translator {
+        translator.abort();
+    }
     result
 }
 
@@ -421,6 +519,84 @@ mod tests {
         let reconnect = client.get(format!("{url}/events")).send().await.unwrap();
         let chunk = reconnect.bytes_stream().next().await.unwrap().unwrap();
         assert!(String::from_utf8_lossy(&chunk).contains("\"sequence\":3"));
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn autodarts_clients_poll_and_stream_the_same_board_states() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::acquire(&dir.path().join("board.toml")).unwrap();
+        let config = store.initialize().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let service = Service::new(Engine::new(config, store, Mode::Demo, address.to_string()));
+        let task = tokio::spawn(serve(listener, service, std::future::pending()));
+        let client = reqwest::Client::new();
+        let state = || async {
+            client
+                .get(format!("http://{address}/api/state"))
+                .send()
+                .await
+                .unwrap()
+                .json::<serde_json::Value>()
+                .await
+                .unwrap()
+        };
+        assert_eq!(
+            state().await,
+            serde_json::json!({"connected": true, "event": "calibrationFinished",
+                "running": false, "status": "throw", "throws": []})
+        );
+        let (mut socket, _) =
+            tokio_tungstenite::connect_async(format!("ws://{address}/api/events?type=state"))
+                .await
+                .unwrap();
+        for command in [
+            Command::Start,
+            Command::DemoThrow {
+                label: "T20".into(),
+                position: None,
+            },
+            Command::DemoTakeout { remaining: 0 },
+        ] {
+            client
+                .post(format!("http://{address}/api/v1/command"))
+                .json(&command)
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap();
+        }
+        let mut steps = Vec::new();
+        let mut last = serde_json::Value::Null;
+        while steps.len() < 4 {
+            let message = tokio::time::timeout(Duration::from_secs(2), socket.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            let packet: serde_json::Value =
+                serde_json::from_str(message.to_text().unwrap()).unwrap();
+            assert_eq!(packet["type"], "state");
+            last = packet["data"].clone();
+            steps.push(format!(
+                "{} {} {}",
+                last["event"].as_str().unwrap(),
+                last["status"].as_str().unwrap(),
+                last["throws"].as_array().unwrap().len()
+            ));
+        }
+        assert_eq!(
+            steps,
+            [
+                "calibrationFinished throw 0",
+                "throwDetected throw 1",
+                "takeoutStarted takeoutInProgress 1",
+                "takeoutFinished throw 0",
+            ]
+        );
+        assert_eq!(state().await, last);
         task.abort();
     }
 

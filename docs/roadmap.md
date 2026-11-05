@@ -1,6 +1,6 @@
 # Roadmap
 
-Updated: 2026-11-02 (v0.1.4). This is the remaining plan; what exists is
+Updated: 2026-11-05 (v0.1.5). This is the remaining plan; what exists is
 described in the [README](../README.md), [usage](usage.md),
 [architecture](architecture.md) and [native API](native-api.md), and the
 evidence behind it in [discovery](discovery.md).
@@ -28,7 +28,7 @@ event behavior is not a drop-in replacement.
 | Calibration from the wire grid, orientation of the 20, measured board radii | Implemented; checked on recordings, not against physical measurements |
 | Dart detection, multi-camera fusion, takeout, off-board masking | Implemented; replayed on four labelled sessions, no accuracy figures |
 | Corrections with saved evidence for analysis | Implemented |
-| Autodarts compatibility adapter | Not started: needs the contract below first |
+| Autodarts local board state (`/api/state`, `/api/events`) | Implemented from one captured session; contract-tested, not yet run with an unchanged client |
 | Lens correction, one-camera scoring, measured performance budgets | Not started |
 
 Scoring needs at least two calibrated cameras (decided 2026-11-02): one camera
@@ -53,14 +53,17 @@ Contract discovery, before writing the adapter:
 - [ ] Inventory HTTP routes, methods, payloads, status codes, headers and errors
   used by those clients.
 - [ ] Capture WebSocket connection behavior, subscriptions, envelopes, initial
-  snapshots, event order and reconnects.
+  snapshots, event order and reconnects. The state envelope and visit order are
+  captured (2026-11-05).
 - [ ] Capture start, stop, reset, calibration success/failure, three throws, early
-  takeout, partial takeout and camera failure.
+  takeout, partial takeout and camera failure. Three throws, early takeout and
+  reset are captured; bulls, misses and bounce-outs are still needed.
 - [ ] Record coordinate units, axes, sector numbering, bull/miss encoding, throw
   ordering and board-ID format.
 - [ ] Check whether previews, configuration, discovery, authentication or heartbeat
   behavior are required.
-- [ ] Save sanitized fixtures and automated contract tests before the adapter.
+- [x] Save sanitized fixtures and automated contract tests before the adapter
+  (one session, 2026-11-05).
 
 Rules for the adapter:
 
@@ -91,7 +94,8 @@ protocol discovery.
 
 ### Compatibility (M1 exit)
 
-- [ ] The Autodarts adapter, built against synthetic and replayed events.
+- [x] The Autodarts board state, built against synthetic and replayed events.
+- [ ] Oche's local-game parser reading the observed throws (an Oche change).
 - [ ] An unmodified target integration connects, receives a synthetic three-dart
   visit, observes takeout and reconnects correctly.
 

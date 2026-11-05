@@ -6,6 +6,7 @@ members = [
     "crates/oche-vision",
     "crates/oche-replay",
     "crates/oche-engine",
+    "crates/oche-autodarts",
     "crates/oche-api",
     "crates/oche-cli",
 ]
@@ -22,6 +23,7 @@ license = "AGPL-3.0-only"
 oche-domain = { path = "crates/oche-domain" }
 oche-engine = { path = "crates/oche-engine" }
 oche-api = { path = "crates/oche-api" }
+oche-autodarts = { path = "crates/oche-autodarts" }
 oche-calibration = { path = "crates/oche-calibration" }
 oche-capture = { path = "crates/oche-capture" }
 oche-vision = { path = "crates/oche-vision" }

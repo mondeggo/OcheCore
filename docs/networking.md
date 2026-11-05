@@ -25,5 +25,6 @@ with `--bind 0.0.0.0`. In Docker, the port mapping (`OCHECORE_BIND`,
 
 The native API and the browser UI are plain HTTP without authentication: anyone
 who can reach them can control the board. Use loopback, a trusted/private LAN, or an SSH tunnel. No hosted
-service is needed. The [native API](native-api.md) is separate from future
-Autodarts adapters.
+service is needed. The Autodarts board state is served on the same
+listener as the [native API](native-api.md#autodarts-local-board-state) and is
+just as unauthenticated.

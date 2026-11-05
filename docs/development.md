@@ -31,7 +31,8 @@ including optional Docker Hub publishing with Oche's credentials convention.
 
 Crates: `oche-domain` (types and board geometry), `oche-capture` (V4L2),
 `oche-calibration`, `oche-vision`, `oche-engine` (state, storage, live pipeline),
-`oche-api` (native HTTP API and browser UI), `oche-cli` (CLI and TUI), and `oche-replay`
+`oche-autodarts` (Autodarts board state from native events),
+`oche-api` (native HTTP API, browser UI and Autodarts routes), `oche-cli` (CLI and TUI), and `oche-replay`
 (offline analysis of recordings). See the
 [roadmap](roadmap.md), [deferred discovery](discovery.md),
 [engineering decisions](architecture.md), and [AGENTS.md](../AGENTS.md).

@@ -112,18 +112,61 @@ and client code before treating any route or payload as a contract.
 
 | Integration | Version/commit | Autodarts profile | Fixtures | Verification |
 | --- | --- | --- | --- | --- |
-| Oche | Unknown | Autodarts 2.0.2 reported by Supervisor; contract pending | Missing | Untested |
+| Oche | `mondeggo/oche` `effb625` (0.3.0) | Autodarts 2.0.2 local `board.state` | `crates/oche-autodarts/tests/fixtures` | Contract test; unchanged client not yet run, and its local-game parser does not read the observed throws (below) |
 | Additional clients | To identify | Unknown | Missing | Untested |
+
+Local board-state capture (2026-11-05). Oche's opt-in raw recorder saved
+`autodarts-20261105T181739178120Z-48906701.jsonl`: 263 states in 6.3 minutes
+from the installed Autodarts board, 18 visits and 53 darts, read by Oche's
+`LocalBoardConnection` (`app/core/board/local.py` at `effb625`). That client
+reads `GET /api/state` once as a baseline, then `WS /api/events?type=state`
+packets `{"type":"state","data":{...}}`, polling `GET /api/state` again after
+2 s without a message, which is why the file repeats a state every 2 s. Its 123
+distinct states, with times relative to the first, are the fixture. Observed:
+
+- Every state has exactly `connected`, `event`, `running`, `status`, `throws`
+  (always present, `[]` when empty), keys in alphabetical order. `connected`
+  and `running` were always `true`.
+- Throws are flat objects: `bed` (`SingleInner`, `Triple`, `SingleOuter`,
+  `Double`), `bouncer` and `failed` (always `false`), `coordsX`/`coordsY`,
+  `method` (`UnanimousCam` for 47 of the 53 darts, `Cam+1` for 5, `BestCam`
+  for 1), `multiplier`, `segmentName` (`S20`, `T1`, `D10`), `segmentNumber`.
+  There is no `numThrows` and no nested `segment`/`coords` object.
+- Coordinates are fractions of 170 mm on OcheCore's axes (+x toward 6, +y toward
+  20): triples lie at 98–106 mm, doubles at 167–168 mm, inner singles at 64–94 mm
+  and outer singles at 107–156 mm.
+- A visit: `throwDetected`/`throw` with one and two darts, `throwDetected`/`takeout`
+  with three, then `takeoutStarted`/`takeoutInProgress` with the darts still
+  listed, then `takeoutFinished`/`throw` with none. One visit was taken out
+  after two darts the same way. `takeoutStarted` came 0.66–4.27 s before
+  `takeoutFinished` (14 of 18 visits under 1.8 s).
+- `manualReset`/`throw` with no darts followed `takeoutFinished` 2.02–2.12 s
+  later after 16 takeouts and 8.6 s later once. Oche sends no reset; the cause is
+  unknown (possibly the Autodarts cloud or another client).
+- 15 times, a visit's first dart was listed while `event` still read
+  `manualReset`, and the next message, 0.5–40 ms later, renamed it
+  `throwDetected`.
+
+Not in this capture, so still open: bulls, misses, bounce-outs and `failed`
+darts; stop, start, calibration and camera failure; partial takeout; WebSocket
+initial messages, other packet types and reconnects; other routes. Oche's
+local-game parser (`LocalGames.parse_board`) requires `numThrows` and nested
+`segment`/`coords`, so it rejects every state above with darts as an
+inconsistent throw count; fixing that belongs in Oche.
 
 - [ ] Inventory routes, methods, headers, payloads, status codes, and errors.
 - [ ] Capture WebSocket handshake, subscriptions, initial state, event order,
   disconnection, and reconnect behavior.
 - [ ] Capture start, stop, reset, calibration success/failure, three throws,
-  early/partial/completed takeout, and camera failure.
+  early/partial/completed takeout, and camera failure. Three throws, early and
+  completed takeout and the visit reset are captured (2026-11-05).
+- [ ] Capture a bull, a double bull, a miss and a bounce-out.
 - [ ] Establish coordinates, score encoding, board ID, null semantics,
-  authentication, previews, discovery, and heartbeat requirements.
-- [ ] Sanitize captures and document provenance before adding fixtures to Git.
+  authentication, previews, discovery, and heartbeat requirements. Coordinates
+  and single/treble/double encoding are established (2026-11-05).
+- [x] Sanitize captures and document provenance before adding fixtures to Git.
 - [ ] Create contract tests and a reproducible unchanged-client integration run.
+  The contract test exists; the unchanged-client run does not.
 
 ## Replay corpus and calibration
 

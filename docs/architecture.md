@@ -66,6 +66,15 @@ and compatibility claims; it does not gate the native control foundation.
   `fs2` and `tempfile` isolate locking/atomic-file operations; `linux-video`
   isolates the V4L2 discovery ioctl boundary. Musl is the release
   C runtime; there is no OpenCV, camera SDK, or decoder FFI yet.
+- **Autodarts board state (2026-11-05):** `oche-autodarts` translates native
+  events into the states of one captured Autodarts 2.0.2 session, without I/O,
+  so a contract test can replay that capture through the engine. One
+  translator task in `oche-api` serves polls and sockets from the same state.
+  The capture's client (Oche) reads `/api/events` as a WebSocket, so axum's
+  `ws` feature is enabled; it adds `tokio-tungstenite` 0.29 and `sha1`, all
+  MIT or Apache-2.0, and no native code. The routes share the native listener
+  rather than taking Autodarts' port 3180, so clients point their board URL at
+  OcheCore's port.
 
 - **Board geometry (`oche-domain::board`):** millimetres, bull at the origin,
   +y toward 20. Nominal radii come from the
@@ -167,8 +176,8 @@ and compatibility claims; it does not gate the native control foundation.
   long pauses is not counted. These rules were set on the 2026-10-29 sessions.
 
 Standby changes the control lifecycle only; speed presets have no processing
-effect until capture/vision exists. No Autodarts adapter is advertised before
-observed contracts and unchanged-client tests exist. These limits are visible
+effect until capture/vision exists. The Autodarts board state is served but not
+advertised (`autodarts_compatibility: false`) until unchanged-client tests exist. These limits are visible
 in both the UI and API.
 
 - **Detection alternatives not chosen:** an adaptive background model (OpenCV's
