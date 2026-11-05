@@ -142,13 +142,34 @@ distinct states, with times relative to the first, are the fixture. Observed:
   after two darts the same way. `takeoutStarted` came 0.66–4.27 s before
   `takeoutFinished` (14 of 18 visits under 1.8 s).
 - `manualReset`/`throw` with no darts followed `takeoutFinished` 2.02–2.12 s
-  later after 16 takeouts and 8.6 s later once. Oche sends no reset; the cause is
-  unknown (possibly the Autodarts cloud or another client).
+  later after 16 takeouts and 8.6 s later once. Oche sends no reset; the second
+  capture below suggests Autodarts resets by itself.
 - 15 times, a visit's first dart was listed while `event` still read
   `manualReset`, and the next message, 0.5–40 ms later, renamed it
   `throwDetected`.
 
-Not in this capture, so still open: bulls, misses, bounce-outs and `failed`
+Second capture, the same evening: `autodarts-20261105T220437178595Z-9bc003b4.jsonl`,
+137 states in 2.6 minutes, 82 of them distinct (the second fixture), with 12
+takeouts and 31 darts, aimed at the bull and outside the board:
+
+- An outer bull is `{"bed":"Single","multiplier":1,"segmentName":"25",
+  "segmentNumber":25}`, a bullseye `{"bed":"Double","multiplier":2,
+  "segmentName":"Bull","segmentNumber":25}`, with coordinates like any dart.
+  A bullseye was listed 6.8 mm from the centre, so Autodarts' bull wire lies
+  beyond 6.8 mm on this board; OcheCore measured it at 6.83 mm.
+- A miss is `{"bed":"Outside","multiplier":0,"segmentName":"M15",
+  "segmentNumber":15}`, named after the segment it landed beside, with its
+  coordinates (173–200 mm from the centre).
+- Three visits were taken out after one dart, with the same
+  `takeoutStarted`/`takeoutFinished` pair as after three.
+- `manualReset` again followed `takeoutFinished` after 2.04–2.17 s, 12 times.
+  Oche's app code (`mondeggo/oche`) never calls a reset route, so Autodarts
+  resets by itself. Once, a bull listed 2 s after a takeout was cleared by that
+  reset and three more darts followed, so it was a detection that Autodarts
+  discarded; the contract test leaves it out.
+- The first dart of a visit was again listed under the previous event first.
+
+Not in the captures, so still open: bounce-outs and `failed`
 darts; stop, start, calibration and camera failure; partial takeout; WebSocket
 initial messages, other packet types and reconnects; other routes. Oche's
 local-game parser (`LocalGames.parse_board`) requires `numThrows` and nested
@@ -161,7 +182,8 @@ inconsistent throw count; fixing that belongs in Oche.
 - [ ] Capture start, stop, reset, calibration success/failure, three throws,
   early/partial/completed takeout, and camera failure. Three throws, early and
   completed takeout and the visit reset are captured (2026-11-05).
-- [ ] Capture a bull, a double bull, a miss and a bounce-out.
+- [ ] Capture a bull, a double bull, a miss and a bounce-out. Bulls, bullseyes
+  and misses are captured (2026-11-05); a bounce-out is not.
 - [ ] Establish coordinates, score encoding, board ID, null semantics,
   authentication, previews, discovery, and heartbeat requirements. Coordinates
   and single/treble/double encoding are established (2026-11-05).

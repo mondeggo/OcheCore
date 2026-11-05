@@ -1,20 +1,24 @@
-//! Replays a captured Autodarts 2.1.1 session through OcheCore's visit state
+//! Replays captured Autodarts 2.1.1 sessions through OcheCore's visit state
 //! and requires the same `board.state` sequence.
 //!
-//! `fixtures/autodarts-2.1.1-board-state.jsonl` holds the 123 distinct states
-//! of `autodarts-20261105T181739178120Z-48906701.jsonl`, which Oche recorded
-//! from the installed board on 2026-11-05 (18 visits, 53 darts), with times in
-//! seconds from the first state. The darts' labels and positions are injected
-//! as demo throws, so this checks the visit lifecycle and payloads, not
-//! detection.
+//! The fixtures hold the distinct consecutive states of two recordings Oche
+//! made from the installed board on 2026-11-05, with times in seconds from the
+//! first state:
+//! - `autodarts-2.1.1-board-state.jsonl`: 123 states of
+//!   `autodarts-20261105T181739178120Z-48906701.jsonl` (18 visits, 53 darts);
+//! - `autodarts-2.1.1-board-state-2.jsonl`: 82 states of
+//!   `autodarts-20261105T220437178595Z-9bc003b4.jsonl` (12 takeouts, 31 darts
+//!   including outer bulls, bullseyes and misses).
+//!
+//! The darts' labels and positions are injected as demo throws, so this checks
+//! the visit lifecycle and payloads, not detection.
 use oche_autodarts::*;
 use oche_domain::{Command, Mode, NativeEvent};
 use oche_engine::{Engine, storage::Store};
 use tokio::sync::broadcast::Receiver;
 
-fn fixture() -> Vec<BoardState> {
-    include_str!("fixtures/autodarts-2.1.1-board-state.jsonl")
-        .lines()
+fn fixture(text: &str) -> Vec<BoardState> {
+    text.lines()
         .map(|line| {
             let mut entry: serde_json::Value = serde_json::from_str(line).unwrap();
             serde_json::from_value(entry["data"].take()).unwrap()
@@ -68,8 +72,15 @@ impl Board {
     }
 
     fn throw(&mut self, throw: &BoardThrow) {
+        // OcheCore's labels for Autodarts' bull and miss names.
+        let label = match (throw.segment_name.as_str(), throw.multiplier) {
+            ("25", _) => "SB".into(),
+            ("Bull", _) => "DB".into(),
+            (_, 0) => "MISS".into(),
+            (name, _) => name.to_string(),
+        };
         self.command(Command::DemoThrow {
-            label: throw.segment_name.clone(),
+            label,
             position: Some([
                 throw.coords_x.unwrap() * 170.0,
                 throw.coords_y.unwrap() * 170.0,
@@ -78,21 +89,51 @@ impl Board {
     }
 }
 
-#[test]
-fn the_captured_session_replays_to_the_same_states() {
-    // Autodarts sometimes lists a new dart while still naming the previous
-    // `manualReset`, then renames it a moment later; OcheCore sends one state.
-    let expected: Vec<BoardState> = fixture()
+/// Replays `text` and requires the same states. A recording that does not
+/// begin with `calibrationFinished` starts on a running board, whose first
+/// state the client read as its baseline.
+fn replay(text: &str) {
+    // Autodarts lists a visit's first dart while still naming the previous
+    // event, then renames it `throwDetected` 0.5–40 ms later; OcheCore sends
+    // one state.
+    let mut previous = 0;
+    let expected: Vec<BoardState> = fixture(text)
         .into_iter()
-        .filter(|s| s.event != MANUAL_RESET || s.throws.is_empty())
+        .filter(|s| {
+            let early = s.event != THROW_DETECTED && s.throws.len() > previous;
+            previous = s.throws.len();
+            !early
+        })
         .collect();
+    // Once, 2 s after a takeout, Autodarts listed a dart that its automatic
+    // reset then cleared, and three more darts followed: a detection it
+    // discarded. The replay leaves out that dart and the reset.
+    let mut kept: Vec<BoardState> = Vec::new();
+    for state in expected {
+        let discards = state.event == MANUAL_RESET
+            && state.throws.is_empty()
+            && kept.last().is_some_and(|s| !s.throws.is_empty());
+        if discards {
+            while kept.last().is_some_and(|s| s.event == THROW_DETECTED) {
+                kept.pop();
+            }
+            continue;
+        }
+        kept.push(state);
+    }
+    let mut expected = kept;
     let mut board = Board::new();
+    if expected[0].event != CALIBRATION_FINISHED {
+        board.command(Command::Start);
+        board.sent.clear();
+        expected.remove(0);
+    }
     let mut thrown = 0;
     for state in &expected {
         match state.event.as_str() {
             CALIBRATION_FINISHED => board.command(Command::Start),
-            // Something resets the visit about 2 s after each takeout in the
-            // capture; Oche does not, and the cause is not known yet.
+            // Autodarts resets the visit about 2 s after each takeout; Oche
+            // sends no reset.
             MANUAL_RESET => board.command(Command::Reset),
             THROW_DETECTED => {
                 for throw in &state.throws[thrown..] {
@@ -114,6 +155,16 @@ fn the_captured_session_replays_to_the_same_states() {
             .iter()
             .all(|s| s.throws.iter().all(|t| t.method == "OcheCore"))
     );
+}
+
+#[test]
+fn the_first_captured_session_replays_to_the_same_states() {
+    replay(include_str!("fixtures/autodarts-2.1.1-board-state.jsonl"));
+}
+
+#[test]
+fn bulls_and_misses_replay_to_the_same_states() {
+    replay(include_str!("fixtures/autodarts-2.1.1-board-state-2.jsonl"));
 }
 
 #[test]

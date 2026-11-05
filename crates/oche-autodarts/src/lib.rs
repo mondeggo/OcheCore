@@ -217,11 +217,11 @@ pub fn board_throw(throw: &Throw) -> BoardThrow {
         }
         'T' => ("Triple", 3, label.to_string()),
         'D' => ("Double", 2, label.to_string()),
-        // Not observed locally: named like Oche's segments.
-        'B' => ("SingleBull", 1, "S25".into()),
-        'E' => ("DoubleBull", 2, "D25".into()),
-        // An Autodarts cloud capture shows a miss as bed `Outside`, multiplier
-        // 0 and the segment it landed beside, named `M17`.
+        // As captured locally (second fixture): segment 25 for both bulls.
+        'B' => ("Single", 1, "25".into()),
+        'E' => ("Double", 2, "Bull".into()),
+        // A miss is bed `Outside`, multiplier 0 and the segment it landed
+        // beside, named `M15` (second fixture).
         _ => {
             let number = position.map_or(0, |[x, y]| beside(x, y));
             return BoardThrow {
@@ -294,7 +294,7 @@ mod tests {
         assert!((s6.coords_x.unwrap() * 170.0 - 133.85).abs() < 1e-9);
         assert!(s6.coords_y.unwrap().abs() < 1e-9);
         let db = throw("DB", None);
-        assert_eq!((db.segment_name.as_str(), db.multiplier), ("D25", 2));
+        assert_eq!((db.segment_name.as_str(), db.multiplier), ("Bull", 2));
         assert_eq!((db.coords_x, db.coords_y), (Some(0.0), Some(0.0)));
     }
 

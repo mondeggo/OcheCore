@@ -58,7 +58,7 @@ Contract discovery, before writing the adapter:
   captured (2026-11-05).
 - [ ] Capture start, stop, reset, calibration success/failure, three throws, early
   takeout, partial takeout and camera failure. Three throws, early takeout and
-  reset are captured; bulls, misses and bounce-outs are still needed.
+  reset are captured, as are bulls and misses; bounce-outs are still needed.
 - [ ] Record coordinate units, axes, sector numbering, bull/miss encoding, throw
   ordering and board-ID format.
 - [ ] Check whether previews, configuration, discovery, authentication or heartbeat

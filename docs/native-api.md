@@ -202,10 +202,11 @@ it happens. `reset` sends `manualReset`; `start` and a new calibration send
 `calibrationFinished` once darts can be scored. `running` is `false` when
 stopped or in standby, which these clients cannot wake.
 
-Chosen here because the capture does not show them: `method` is `OcheCore`;
-bulls are `S25`/`D25` with beds `SingleBull`/`DoubleBull`; misses are bed
-`Outside`, multiplier 0, named after the segment beside them (`M3`), as in an
-Autodarts cloud capture; a dart OcheCore could not place is such a miss with
+As captured: an outer bull is bed `Single`, multiplier 1, named `25`; a bullseye
+is bed `Double`, multiplier 2, named `Bull`; both have segment number 25. A miss
+is bed `Outside`, multiplier 0, named and numbered after the segment beside it
+(`M15`). Chosen here because the captures do not show them: `method` is
+`OcheCore`; a dart OcheCore could not place is such a miss with
 `failed: true`, number 0 and null coordinates; darts without a detected position
 are placed in the middle of their bed. The state while stopped keeps the visit's
 status. Autodarts' own `manualReset` about 2 s after each takeout is not
