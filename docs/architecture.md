@@ -81,9 +81,12 @@ and compatibility claims; it does not gate the native control foundation.
   [WDF approved-equipment specification](https://site.dartswdf.com/rules/approved-by-wdf/):
   double outer edge 170.0 mm, treble 107.4 mm, ring inside width 8.0 mm, bull and
   outer-bull inside diameters 12.7 and 31.8 mm. An older 1995 WDF text gives a
-  107.0 mm treble. Boundaries are zero-width circles and radials; every hit
-  reports its distance to the nearest wire so callers can treat near-wire
-  impacts as ambiguous. The installed board has not been measured yet.
+  107.0 mm treble. Boundaries are zero-width circles and radials at wire
+  centres, so since 2026-11-05 the nominal treble and double are 9.7 mm wide
+  between centres (8.0 mm inside plus one wire, as the installed board measured
+  in [discovery](discovery.md); 8.0 mm before). Every hit reports its distance to
+  the nearest wire so callers can treat near-wire impacts as ambiguous.
+  Calibration measures each board's radii from this start.
 - **Calibration (`oche-calibration`):** per-camera image-to-board homography by
   normalized DLT from named anchors (bull plus radial-wire crossings on the four
   ring boundaries). Rejects fewer than four points, non-finite input, rank

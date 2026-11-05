@@ -6,13 +6,14 @@
    changes (docs/native-api.md). localStorage keeps per-browser conveniences. */
 
 const SEGMENTS = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5];
-/* Nominal WDF radii in millimetres, like BoardDimensions::wdf in oche-domain. */
+/* Nominal radii of wire centres in millimetres, like BoardDimensions::wdf in
+   oche-domain: rings 9.7 mm wide between wire centres. */
 const WDF_BOARD = {
   inner_bull: 6.35,
   outer_bull: 15.9,
-  treble_inner: 99.4,
+  treble_inner: 97.7,
   treble_outer: 107.4,
-  double_inner: 162,
+  double_inner: 160.3,
   double_outer: 170
 };
 /* The radii boards are drawn and clicks scored with: the calibration's

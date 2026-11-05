@@ -291,7 +291,7 @@ mod tests {
     fn darts_without_a_position_sit_in_the_middle_of_their_bed() {
         let s6 = throw("S6", None);
         assert_eq!(s6.bed, "SingleOuter");
-        assert!((s6.coords_x.unwrap() * 170.0 - 134.7).abs() < 1e-9);
+        assert!((s6.coords_x.unwrap() * 170.0 - 133.85).abs() < 1e-9);
         assert!(s6.coords_y.unwrap().abs() < 1e-9);
         let db = throw("DB", None);
         assert_eq!((db.segment_name.as_str(), db.multiplier), ("D25", 2));

@@ -72,6 +72,11 @@ impl BoardLine {
     }
 }
 
+/// Nominal treble and double width between wire centres, in millimetres: the
+/// WDF 8.0 mm inside width plus one wire. The installed board measured 9.74
+/// and 9.65 mm (docs/discovery.md, 2026-10-30).
+pub const RING_WIDTH: f64 = 9.7;
+
 /// Boundary radii in millimetres, from the centre outward.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct BoardDimensions {
@@ -87,15 +92,17 @@ impl BoardDimensions {
     /// Nominal values from the WDF approved-equipment specification
     /// (<https://site.dartswdf.com/rules/approved-by-wdf/>): double wire outer
     /// edge 170.0 mm, treble 107.4 mm, ring inside width 8.0 mm, bull and outer
-    /// bull inside diameters 12.7 mm and 31.8 mm. A particular board may differ
-    /// and should be measured.
+    /// bull inside diameters 12.7 mm and 31.8 mm. Boundaries are wire centres,
+    /// so a ring spans its inside width plus one wire: [`RING_WIDTH`] between
+    /// centres rather than 8.0 mm. A particular board may differ and should be
+    /// measured.
     pub fn wdf() -> Self {
         Self {
             inner_bull: 12.7 / 2.0,
             outer_bull: 31.8 / 2.0,
-            treble_inner: 107.4 - 8.0,
+            treble_inner: 107.4 - RING_WIDTH,
             treble_outer: 107.4,
-            double_inner: 170.0 - 8.0,
+            double_inner: 170.0 - RING_WIDTH,
             double_outer: 170.0,
         }
     }

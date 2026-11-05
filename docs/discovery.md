@@ -261,6 +261,12 @@ agrees within about 0.1 mm):
 | Double inner | 162.00 | 160.35 |
 | Double outer | 170.00 | 170.00 (scale) |
 
+Since 2026-11-05 the nominal board (`BoardDimensions::wdf`) uses 9.7 mm
+between wire centres for the treble and double (treble inner 97.70, double
+inner 160.30), after these measurements; the column above is the earlier 8.0 mm
+nominal. Calibration measures every radius from that start, so a calibrated
+board scores as before; the change was not replayed on the recordings.
+
 Wire-fit residuals are 0.2-0.3 mm RMS per camera (about 2000 ring and 540
 radial points each), against 1.2 mm for the colour-band fit. With the measured
 board and shaft-line fitting, all 12 results in `visit1-labelled` and all 18
