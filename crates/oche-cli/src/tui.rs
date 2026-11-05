@@ -830,8 +830,9 @@ fn detection_summary(s: &Snapshot) -> String {
         }
         Mode::Live if !s.capabilities.vision => "needs at least two calibrated cameras".into(),
         Mode::Live => format!(
-            "live · {} analyses/s per camera · scene {:?}",
+            "live · {} analyses/s per camera · scores {} s after a dart stops · scene {:?}",
             s.config.detection.speed.analysis_hz(),
+            s.config.detection.speed.still_seconds(),
             s.scene
         ),
     }

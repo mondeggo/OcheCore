@@ -1147,6 +1147,21 @@ mod tests {
     }
 
     #[test]
+    fn a_shorter_still_time_settles_sooner() {
+        let empty = frame(&[]);
+        let settled_within = |min_still_seconds| {
+            let settings = Settings {
+                min_still_seconds,
+                ..Settings::default()
+            };
+            let mut detector = Detector::new(vec![(1, None), (2, None)], settings);
+            !feed(&mut detector, &mut 0.0, &empty, 0.8).is_empty()
+        };
+        assert!(settled_within(0.4));
+        assert!(!settled_within(1.0));
+    }
+
+    #[test]
     fn motion_without_a_lasting_change_produces_nothing() {
         let mut detector = Detector::new(vec![(1, None)], Settings::default());
         let mut t = 0.0;

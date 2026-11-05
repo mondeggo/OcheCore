@@ -34,6 +34,8 @@ const SAMPLE_QUEUE: usize = 6;
 struct Plan {
     specs: Vec<CameraSpec>,
     calibration: Option<u64>,
+    /// [`oche_domain::Speed::still_seconds`] of the configured speed.
+    still_seconds: f64,
 }
 
 struct Running {
@@ -658,6 +660,7 @@ fn plan_for(engine: &Engine) -> (Option<Plan>, BoardDimensions, Mappers, Vec<u8>
     let plan = Plan {
         specs,
         calibration: calibration.map(|c| c.created_unix_ms),
+        still_seconds: config.detection.speed.still_seconds(),
     };
     (Some(plan), board, mappers, configured)
 }
@@ -677,11 +680,16 @@ fn start(
         .map(|spec| Camera::start(spec.clone(), samples.clone()))
         .collect();
     drop(samples);
+    let still_seconds = plan.still_seconds;
     let frames: Vec<oche_capture::FrameSource> = cameras.iter().map(Camera::frames).collect();
     let detector = std::thread::Builder::new()
         .name("detector".into())
         .spawn(move || {
-            let mut detector = Detector::new(mappers, Settings::default());
+            let settings = Settings {
+                min_still_seconds: still_seconds,
+                ..Settings::default()
+            };
+            let mut detector = Detector::new(mappers, settings);
             if images.is_some() {
                 detector = detector.keep_detail();
             }

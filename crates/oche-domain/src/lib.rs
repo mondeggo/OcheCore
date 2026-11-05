@@ -114,6 +114,24 @@ impl Speed {
         }
     }
 
+    /// How long every camera must be still before a scene is scored. A dart
+    /// is reported this long after it stops moving, so this, not the analysis
+    /// rate, sets most of the delay: with 1.0 s at every speed, the installed
+    /// board took a median 1.69 s from first motion to score over 11 darts
+    /// (2026-11-06). Waiting shorter scores sooner but risks taking a pause (a
+    /// hand stopping during takeout, a flight still settling) for a new scene.
+    /// Each wait still holds about five analysed frames, the reference
+    /// average. Not yet replayed on the recordings.
+    pub fn still_seconds(self) -> f64 {
+        match self {
+            Self::VeryLow => 1.0,
+            Self::Low => 0.8,
+            Self::Default => 0.5,
+            Self::High => 0.4,
+            Self::VeryHigh => 0.3,
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::VeryLow => "very_low",
@@ -898,6 +916,23 @@ pub struct ApiError {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn faster_speeds_wait_less_but_still_average_a_reference() {
+        for pair in Speed::ALL.windows(2) {
+            assert!(pair[1].analysis_hz() > pair[0].analysis_hz());
+            assert!(pair[1].still_seconds() < pair[0].still_seconds());
+        }
+        // Frames analysed within the wait, against the five averaged into a
+        // reference; the slowest speed analyses only 3 per second.
+        for speed in Speed::ALL {
+            let frames = speed.still_seconds() * f64::from(speed.analysis_hz());
+            assert!(frames >= 3.0, "{speed:?}: {frames}");
+        }
+        for speed in [Speed::Default, Speed::High, Speed::VeryHigh] {
+            assert!(speed.still_seconds() * f64::from(speed.analysis_hz()) >= 5.0);
+        }
+    }
+
     fn live_snapshot() -> Snapshot {
         let mut config = Config {
             cameras: (1..=2).map(CameraConfig::new).collect(),

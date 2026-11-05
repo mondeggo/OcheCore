@@ -86,7 +86,15 @@ Speed presets: `very_low`, `low`, `default`, `high`, `very_high`: 3, 5, 10, 15 a
 Capture always runs at the configured FPS; the preset only sets how many frames
 are decoded and compared. A 1280x720 decode took about 17 ms on one Raspberry Pi 4
 core (measured 2026-10-30), so `default` with three cameras costs roughly half a
-core. Whether higher speeds detect darts better or faster has not been measured. Standby values: `0` (disabled), `300`, `600`,
+core.
+
+A dart is scored once every camera has been still for a while: 1.0, 0.8, 0.5,
+0.4 and 0.3 s from `very_low` to `very_high`. That wait, not the analysis rate, is
+most of the delay between a dart landing and its score: when every speed waited
+1.0 s, the installed board took a median 1.69 s from first motion to score over
+11 darts (2026-11-06). A shorter wait can take a pause, such as a hand stopping
+while pulling darts or a flight still settling, for a finished scene; the
+shorter waits have not been replayed on the recordings yet. Standby values: `0` (disabled), `300`, `600`,
 `900`, `1800`, or `3600` seconds; standby closes the cameras and polling does not
 keep the service awake. `calibrate --camera N` refits one camera against the board
 already measured; `calibrate --all` measures the board's wire radii and fits every

@@ -329,6 +329,16 @@ removes such movement; a synthetic test covers that. Anything moving within
 450 mm of the bull on the board plane, which includes the board's surround and
 part of the wall around it, is still watched.
 
+Scoring delay (2026-11-06). OcheCore 0.1.6 on the installed board, speed
+`very_high` (30 Hz), waited 1.0 s of stillness at every speed. Polling the
+snapshot's `motion` flag every 50 ms and following `/api/v1/events` from the LAN,
+11 darts took 1.56-2.65 s (median 1.69 s) from the first motion to
+`throw_accepted`. The snapshot reports the scene still only together with the
+event, so the remaining ~0.7 s of settling and processing cannot be split from
+this. The waits now depend on the speed (1.0, 0.8, 0.5, 0.4, 0.3 s from
+`very_low` to `very_high`; `default` was 1.0 s); not yet replayed on the
+recordings or measured again on the board.
+
 - [ ] Record movement beside the board (people passing, a hand on the wall) to
   measure the watched radius on real disturbances.
 - [ ] Confirm the measured radii with a ruler (treble inner wire diameter

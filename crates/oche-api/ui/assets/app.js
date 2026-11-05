@@ -2166,6 +2166,8 @@ function importChanges(snapshot, imported) {
 
 /* Frames analysed per second per camera (Speed::analysis_hz in oche-domain). */
 const ANALYSIS_HZ = { very_low: 3, low: 5, default: 10, high: 15, very_high: 30 };
+/* Seconds of stillness before a dart is scored, like Speed::still_seconds. */
+const STILL_SECONDS = { very_low: 1, low: 0.8, default: 0.5, high: 0.4, very_high: 0.3 };
 
 /* What detection is doing, like the terminal UI's detection line. */
 function detectionSummary(snapshot) {
@@ -2174,7 +2176,8 @@ function detectionSummary(snapshot) {
   if (snapshot.state !== "running") return "Cameras are off. Start the board on the Live page.";
   if (!snapshot.capabilities.calibration) return "Needs calibration: empty the board, then calibrate.";
   if (!snapshot.capabilities.vision) return "Needs at least two calibrated cameras to score.";
-  return `Live · ${ANALYSIS_HZ[snapshot.config.detection.speed]} analyses per second per camera.`;
+  const speed = snapshot.config.detection.speed;
+  return `Live · ${ANALYSIS_HZ[speed]} analyses per second per camera; a dart is scored ${STILL_SECONDS[speed]} s after it stops moving.`;
 }
 
 /* One camera as the terminal UI lists it: device, state and calibration. */
