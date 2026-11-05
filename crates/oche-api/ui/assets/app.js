@@ -36,14 +36,19 @@ function useBoard(board = WDF_BOARD) {
 }
 useBoard();
 
+/* The drawn board's dark rim, just outside the numbers; boards are drawn in
+   a 448 mm square around it. */
+const SURROUND = 222;
 const boardRadii = () => [R.bull, R.outerBull, R.tripleIn, R.tripleOut, R.doubleIn, R.doubleOut];
+/* High-contrast board colours: near-black and warm cream singles,
+   saturated red and green rings. */
 const COLORS = {
-  dark: "#20241f",
-  light: "#efe2bd",
-  red: "#d84c40",
-  green: "#267757",
-  surround: "#101c17",
-  wire: "#b9c3be",
+  dark: "#07090b",
+  light: "#ecd5c4",
+  red: "#e3263f",
+  green: "#00975a",
+  surround: "#131a17",
+  wire: "#a7b8bf",
   number: "#fbf4e4",
   lime: "#ddf56f",
   yellow: "#ffd463",
@@ -164,7 +169,7 @@ function drawBoard(parent, map = identity, options = {}) {
   const polygon = (points, fill) =>
     svgEl("polygon", { points: pointsAttr(points.map(map)), fill }, group);
 
-  if (surround) polygon(circlePoints(228), COLORS.surround);
+  if (surround) polygon(circlePoints(SURROUND), COLORS.surround);
 
   SEGMENTS.forEach((number, index) => {
     const start = -99 + index * 18;
@@ -713,6 +718,7 @@ const MODE_NAMES = { live: "Live", demo: "Demo mode", control_only: "Controls on
 
 /* Status-bar icons, 16 × 16, drawn in the text colour. */
 const STATUS_ICONS = {
+  board: '<g fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="6.3"/><circle cx="8" cy="8" r="3.4"/></g><circle cx="8" cy="8" r="1.1" fill="currentColor"/>',
   start: '<path d="M5 3.5v9l7-4.5z" fill="currentColor"/>',
   stop: '<rect x="4" y="4" width="8" height="8" rx="1.2" fill="currentColor"/>',
   reset: '<path d="M8 3.5 3.5 9h9z" fill="currentColor"/><rect x="3.5" y="10.5" width="9" height="2" rx=".6" fill="currentColor"/>',
@@ -724,9 +730,8 @@ const STATUS_ICONS = {
 const statusIcon = name =>
   `<svg class="status-icon" viewBox="0 0 16 16" aria-hidden="true">${STATUS_ICONS[name]}</svg>`;
 
-/* Every page's footer gets the same controls and readouts, like the
-   Autodarts status bar: board controls beside the state, then camera FPS,
-   CPU, memory and version on the right. */
+/* Every page's footer gets the same controls and readouts: board controls
+   beside the state, then camera FPS, CPU, memory and version on the right. */
 function buildStatusBar(bar) {
   if (bar.dataset.built) return;
   bar.dataset.built = "true";
@@ -785,8 +790,7 @@ function renderStatusBar({ snapshot, connected }) {
   state.dataset.tone = connected ? LEVEL_TONES[activity.level] : "problem";
   state.title = connected ? sentence(activity.detail) : "The daemon is not reachable; retrying";
   if (cameraText) {
-    /* Each camera's delivered FPS in slot order, as Autodarts shows them;
-       a dash for a camera that is not streaming. */
+    /* Each camera's delivered FPS in slot order; a dash for a camera that is not streaming. */
     const count = snapshot.config.cameras.length;
     const fps = snapshot.config.cameras.map(camera => {
       const status = snapshot.cameras.find(item => item.slot === camera.slot);
@@ -1798,7 +1802,7 @@ function createPlayView(interactive = false) {
   /* A flattened camera picture shown instead of the drawn board, cut to the
      drawn board's outline. */
   const clip = svgEl("clipPath", { id: "photo-clip" }, svgEl("defs", {}, board));
-  svgEl("circle", { r: 228 }, clip);
+  svgEl("circle", { r: SURROUND }, clip);
   const photo = svgEl("image", {
     x: -235, y: -235, width: 470, height: 470, hidden: "", "clip-path": "url(#photo-clip)"
   }, board);
@@ -1845,17 +1849,18 @@ function createPlayView(interactive = false) {
       const area = hitArea(...point);
       if (area) svgEl("polygon", { points: pointsAttr(area), fill: COLORS.yellow, opacity: 0.85 }, hitLayer);
       const group = svgEl("g", { transform: `translate(${round1(point[0])} ${round1(point[1])})` }, dartLayer);
-      svgEl("circle", { r: 7.4, fill: DART_COLORS[index], stroke: COLORS.ink, "stroke-width": 2 }, group);
+      // About the size of a dart's barrel, so it marks a spot within a ring.
+      svgEl("circle", { r: 3.6, fill: DART_COLORS[index], stroke: COLORS.ink, "stroke-width": 1.4 }, group);
       const number = svgEl("text", {
-        y: -13,
+        y: -9,
         "text-anchor": "middle",
         fill: "#fffdf7",
-        "font-size": 14,
+        "font-size": 11,
         "font-weight": 900,
         "font-family": "Arial Rounded MT Bold, Trebuchet MS, sans-serif",
         "paint-order": "stroke",
         stroke: COLORS.ink,
-        "stroke-width": 4
+        "stroke-width": 3
       }, group);
       number.textContent = index + 1;
     });
@@ -1992,25 +1997,35 @@ function createBoardViewSwitch(view) {
     if (choice !== "drawn" && !available.some(camera => String(camera.slot) === choice)) {
       view.showPhoto(null);
     }
-    const items = [["drawn", "Drawn", ""], ...snapshot.config.cameras.map(camera =>
-      [String(camera.slot), `Cam ${camera.slot}`, unavailable(snapshot, camera)])];
+    const items = [["drawn", statusIcon("board"), ""], ...snapshot.config.cameras.map(camera =>
+      [String(camera.slot), `${statusIcon("camera")}${camera.slot}`, unavailable(snapshot, camera)])];
     const key = JSON.stringify([items, choice, available.length]);
     if (key === shownKey) return;
     shownKey = key;
     container.hidden = false;
     const shown = available.some(camera => String(camera.slot) === choice) ? choice : "drawn";
     container.innerHTML = items.map(([value, label, why]) =>
-      `<button type="button" role="radio" aria-checked="${value === shown}" data-view="${value}"${why ? ` disabled title="${escapeHtml(why)}"` : ` title="${value === "drawn" ? "The drawn board" : `Camera ${value}'s picture, flattened with the 20 up`}"`}>${label}</button>`).join("");
+      `<button type="button" role="radio" aria-checked="${value === shown}" data-view="${value}" aria-label="${value === "drawn" ? "Drawn board" : `Camera ${value}`}"${why ? ` disabled title="${escapeHtml(`Camera ${value}: ${why}`)}"` : ` title="${value === "drawn" ? "The drawn board" : `Camera ${value}'s picture, flattened with the 20 up`}"`}>${label}</button>`).join("");
   }
 
+  /* Collapsed to the view shown; hovering lists the others. A tap on the shown
+     view lists them too, for touch screens. */
   container.addEventListener("click", event => {
     const button = event.target.closest("[data-view]");
     if (!button || button.disabled) return;
+    if (button.getAttribute("aria-checked") === "true") {
+      container.classList.toggle("is-open");
+      return;
+    }
+    container.classList.remove("is-open");
     choice = button.dataset.view;
     storage.set("board-view", choice);
     shownKey = "";
     if (daemon.snapshot) render(daemon.snapshot);
     refresh();
+  });
+  document.addEventListener("click", event => {
+    if (!container.contains(event.target)) container.classList.remove("is-open");
   });
   window.setInterval(() => {
     if (choice !== "drawn") refresh();
@@ -2363,22 +2378,26 @@ const GAME_EVENTS = {
 
 /* Hiding the game events gives the board the whole width; each browser
    remembers its choice. */
+/* The events panel collapses to a button in the top right corner, which
+   expands it again; the panel's own Hide button collapses it. */
 function initEventsToggle() {
   const layout = document.querySelector(".home-layout");
   const panel = document.getElementById("event-panel");
-  const toggle = document.getElementById("events-toggle");
+  const show = document.getElementById("events-show");
+  const hide = document.getElementById("events-hide");
   const apply = hidden => {
     panel.hidden = hidden;
+    show.hidden = !hidden;
     layout.classList.toggle("is-events-hidden", hidden);
-    toggle.setAttribute("aria-expanded", String(!hidden));
-    toggle.textContent = hidden ? "Show events" : "Hide events";
   };
-  apply(storage.get("events-hidden", false) === true);
-  toggle.addEventListener("click", () => {
-    const hidden = !panel.hidden;
+  const choose = hidden => {
     storage.set("events-hidden", hidden);
     apply(hidden);
-  });
+    (hidden ? show : hide).focus();
+  };
+  apply(storage.get("events-hidden", false) === true);
+  show.addEventListener("click", () => choose(false));
+  hide.addEventListener("click", () => choose(true));
 }
 
 function initHomePage() {

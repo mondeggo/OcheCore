@@ -35,18 +35,16 @@
   <main class="page-shell" id="main-content">
     <div class="page-body home-layout">
       <section class="home-play" aria-label="Current visit">
-        <div class="detection-strip" aria-live="polite">
-          <button class="btn btn-lime" type="button" data-command="start" data-when-stopped hidden>Start</button>
-          <button class="btn" type="button" data-command="stop" data-when-running hidden>Stop</button>
-          <span class="board-state" id="board-state" data-tone="busy">Connecting</span>
-          <div class="dart-slots" id="dart-slots"></div>
-          <span class="visit-total">Total <strong id="visit-total">0</strong></span>
-          <button class="btn" type="button" data-command="reset">Reset</button>
-          <button class="btn" type="button" id="events-toggle" aria-controls="event-panel" aria-expanded="true">Hide events</button>
+        <div class="play-head">
+          <div class="detection-strip" aria-live="polite">
+            <span class="board-state" id="board-state" data-tone="busy">Connecting</span>
+            <div class="dart-slots" id="dart-slots"></div>
+            <span class="visit-total">Total <strong id="visit-total">0</strong></span>
+          </div>
+          <div class="view-switch is-collapsible" id="board-view" role="radiogroup" aria-label="Board view" hidden></div>
         </div>
         <div class="board-stage">
-          <svg id="throw-board" class="is-display" viewBox="-235 -235 470 470" role="img" aria-label="Dartboard with the darts of the current visit"></svg>
-          <div class="view-switch" id="board-view" role="radiogroup" aria-label="Board view" hidden></div>
+          <svg id="throw-board" class="is-display" viewBox="-224 -224 448 448" role="img" aria-label="Dartboard with the darts of the current visit"></svg>
         </div>
       </section>
 
@@ -54,10 +52,12 @@
         <div class="panel-header">
           <h2 id="events-title">Game events</h2>
           <a class="accuracy-count" id="home-accuracy" href="settings/index.html#accuracy-title" hidden></a>
+          <button class="btn btn-small" type="button" id="events-hide" aria-controls="event-panel">Hide</button>
         </div>
         <ol class="event-feed" id="event-feed" aria-live="polite"></ol>
         <p class="event-empty" id="event-empty">Waiting for the first dart. In demo mode, throw demo darts from <a href="debug/index.html">Debug</a>.</p>
       </section>
+      <button class="btn btn-small events-show" type="button" id="events-show" aria-controls="event-panel" aria-expanded="false" hidden>Game events</button>
     </div>
   </main>
 

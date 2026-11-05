@@ -122,15 +122,18 @@ opens by itself on the first run, and later from **Run setup again** in Settings
 While setup runs, only its steps are shown; once the board is set up, **Exit
 setup** leads back to Settings.
 
-- **Live** (`/`): Start/Stop and Reset, the current visit's three darts and total
-  on a board, and a feed of game events headed by the
-  [accuracy count](#accuracy-count) (hover for the details). **Hide events** gives
-  the board the whole width; each browser remembers the choice. The drawn board
+- **Live** (`/`): the current visit's three darts and total on a board (Start/Stop
+  and Reset are in the status bar), and a feed of game events headed by the
+  [accuracy count](#accuracy-count) (hover for the details). **Hide** in the
+  events panel gives the board the whole width, and **Game events** in the top
+  right corner brings the panel back; each browser remembers the choice. The drawn board
   uses the calibration's measured ring radii, as scoring does (WDF nominal ones
   before calibration). Until a live board has a device for every
-  camera and a calibration for each, it opens setup instead. The switch on the
-  board shows either the drawn board or a calibrated camera's picture flattened
-  through its calibration: face-on with the 20 up, refreshed every few seconds
+  camera and a calibration for each, it opens setup instead. The switch under the
+  score row, flush with the total, shows the view in use (a board icon for the drawn
+  board, a camera icon and number for a camera); hover over it, or tap it, to
+  pick another. It shows either the drawn board or a calibrated camera's picture
+  flattened through its calibration: face-on with the 20 up, refreshed every few seconds
   and whenever the visit changes. Cameras that are not calibrated or not
   streaming are greyed out and say why. Darts are drawn where the detector placed
   them (at the middle of their segment when it could not). To correct a dart on
@@ -228,7 +231,7 @@ block the control worker. There are no guessed fallback camera capabilities.
 ### Board state
 
 The **State** line under the control buttons (and `oche-core status`) reports what
-the board is doing, in the way Autodarts-style clients show it:
+the board is doing:
 
 | State | Meaning |
 | --- | --- |

@@ -1125,6 +1125,27 @@ select {
   text-align: right;
 }
 
+/* In the strip above a board, the visit's darts and total are the headline. */
+.detection-strip .board-state {
+  min-width: 8.5rem;
+}
+
+.detection-strip .dart-slot {
+  min-width: 5.4rem;
+  padding: 0.3rem 0.9rem;
+  font-size: 1.8rem;
+}
+
+.detection-strip .visit-total {
+  padding: 0.3rem 1.2rem;
+  font-size: 0.72rem;
+}
+
+.detection-strip .visit-total strong {
+  font-size: 2.3rem;
+}
+
+
 .board-stage {
   position: relative;
   flex: 1;
@@ -1133,9 +1154,9 @@ select {
 
 .board-stage > svg {
   position: absolute;
-  inset: 0.8rem;
-  width: calc(100% - 1.6rem);
-  height: calc(100% - 1.6rem);
+  inset: 0;
+  width: 100%;
+  height: 100%;
   filter: drop-shadow(0 14px 14px rgba(0, 0, 0, 0.3));
   cursor: crosshair;
   transition: opacity 200ms ease;
@@ -1205,9 +1226,24 @@ select {
   gap: 1.2rem;
 }
 
-/* Events hidden: the board takes the whole width. */
+/* Events hidden: the board takes the whole width, and a button in the top
+   right corner expands them again. */
+.home-layout {
+  position: relative;
+}
+
 .home-layout.is-events-hidden {
   grid-template-columns: minmax(0, 1fr);
+}
+
+.events-show {
+  position: absolute;
+  top: 0;
+  right: 0;
+}
+
+.event-panel .panel-header .accuracy-count {
+  margin-left: auto;
 }
 
 .home-play {
@@ -1670,6 +1706,21 @@ select {
     display: none;
   }
 
+  /* Phones: drop the listening address and let the readouts wrap. */
+  .status-bar {
+    flex-wrap: wrap;
+    row-gap: 0.3rem;
+  }
+
+  #status-address {
+    display: none;
+  }
+
+  .status-right {
+    flex-wrap: wrap;
+    gap: 0.3rem 0.9rem;
+  }
+
   .app-nav a {
     padding-inline: 0.6rem;
   }
@@ -1694,8 +1745,13 @@ select {
     grid-template-columns: 1fr;
   }
 
-  .dart-slot {
+  .dart-slot,
+  .detection-strip .dart-slot {
     min-width: 3.4rem;
+  }
+
+  .detection-strip .dart-slot {
+    font-size: 1.3rem;
   }
 
   .board-state {
@@ -1804,11 +1860,24 @@ input:disabled {
   cursor: not-allowed;
 }
 
-/* Live board view: the drawn board or a flattened camera picture. */
-.view-switch {
+/* Live: the score row centred over the board, and the board view switch
+   under it, flush with its right edge. The switch floats beside the board's
+   top, where its square is empty, so the board keeps the height. */
+.play-head {
+  position: relative;
+  max-width: 100%;
+  align-self: center;
+}
+
+.play-head .view-switch {
   position: absolute;
-  top: 0.8rem;
-  right: 0.8rem;
+  top: calc(100% + 0.4rem);
+  right: 0;
+  z-index: 1;
+}
+
+/* Board view: the drawn board or a flattened camera picture. */
+.view-switch {
   display: flex;
   gap: 0.2rem;
   padding: 0.2rem;
@@ -1818,6 +1887,9 @@ input:disabled {
 }
 
 .view-switch button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
   padding: 0.25rem 0.7rem;
   border: 0;
   border-radius: 999px;
@@ -1855,6 +1927,27 @@ button.dart-slot:hover {
 
 .board-stage > svg.is-correcting {
   cursor: crosshair;
+}
+
+/* Live: only the view shown, in the board's corner; hovering, keyboard focus
+   or a tap lists the others to its left. */
+.view-switch.is-collapsible button[aria-checked="true"] {
+  order: 1;
+}
+
+.view-switch.is-collapsible button[aria-checked="false"] {
+  display: none;
+}
+
+.view-switch.is-collapsible:hover button,
+.view-switch.is-collapsible:has(:focus-visible) button,
+.view-switch.is-collapsible.is-open button {
+  display: inline-flex;
+}
+
+.view-switch .status-icon {
+  width: 1rem;
+  height: 1rem;
 }
 
 .view-switch button:disabled {
@@ -1931,4 +2024,14 @@ button.dart-slot:hover {
   border-top: 1.5px solid var(--ink);
   font-size: 0.72rem;
   font-weight: 800;
+}
+
+/* Narrow screens: the board's events stack below it, and so does the
+   button that expands them. */
+@media (max-width: 900px), (max-height: 599px) {
+  .events-show {
+    position: static;
+    align-self: start;
+    justify-self: end;
+  }
 }
