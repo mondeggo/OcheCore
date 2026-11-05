@@ -177,7 +177,8 @@ setup** leads back to Settings.
   pictures**, so the cameras are not streamed to the browser.
 
 Every page's status bar shows the board state with Start/Stop, Reset and (live
-mode) Calibrate buttons beside it, and on the right each camera's FPS (`off`
+mode) Calibrate buttons beside it, then the board name and the address OcheCore
+listens on (not on phones), and on the right each camera's FPS (`off`
 when not capturing), OcheCore's CPU (share of one core) and memory, the mode and
 the version. The GitHub mark in the header opens the repository.
 

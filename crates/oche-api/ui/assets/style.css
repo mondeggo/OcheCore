@@ -1205,21 +1205,6 @@ select {
 }
 
 /* Board view: the current visit and the game events. */
-.home-board-name {
-  margin: 0 auto;
-  padding: 0.3rem 1rem;
-  border: 1.5px solid var(--ink);
-  border-radius: 999px;
-  color: var(--lime);
-  background: var(--ink);
-  font-family: var(--display);
-  font-size: 0.95rem;
-}
-
-.home-board-name:empty {
-  display: none;
-}
-
 .home-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.5fr) minmax(280px, 0.6fr);
@@ -1670,10 +1655,6 @@ select {
   .setup-nav {
     flex-basis: 100%;
     order: 3;
-  }
-
-  .home-board-name {
-    display: none;
   }
 
   .detection-settings,

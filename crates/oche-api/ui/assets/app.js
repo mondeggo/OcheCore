@@ -805,9 +805,12 @@ function renderStatusBar({ snapshot, connected }) {
   if (address) {
     const { bind, port } = snapshot.config.server;
     const saved = bind.includes(":") ? `[${bind}]:${port}` : `${bind}:${port}`;
-    address.textContent = snapshot.restart_required
+    const listening = snapshot.restart_required
       ? `${snapshot.listening_on} · ${saved} after restart`
       : snapshot.listening_on;
+    const name = snapshot.config.board.name;
+    address.textContent = name ? `${name} · ${listening}` : listening;
+    address.title = "Board name and the address OcheCore listens on";
   }
   if (connection) {
     const mode = MODE_NAMES[snapshot.mode] || snapshot.mode;
@@ -2415,7 +2418,6 @@ function initHomePage() {
     let revision = null;
     const accuracy = document.getElementById("home-accuracy");
     daemon.subscribe(({ snapshot: current, events }) => {
-      document.getElementById("home-board-name").textContent = current.config.board.name;
       const percent = accuracyPercent(current.accuracy);
       accuracy.textContent = percent === null ? "Accuracy —" : `Accuracy ${percent}%`;
       accuracy.title = `${accuracySummary(current.accuracy)}. Reset it in Settings.`;
