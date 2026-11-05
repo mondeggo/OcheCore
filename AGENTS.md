@@ -16,8 +16,11 @@ to consuming applications.
 ## Implementation order
 
 - Prioritize the remaining discovery and the Autodarts compatibility contract
-  (see `docs/roadmap.md`). Detection changes must be measured on the replay
-  corpus before and after; native service work can proceed meanwhile.
+  (see `docs/roadmap.md`). Measure detection changes on the replay corpus before
+  and after when the recordings are at hand. When they are not, base the change
+  on recorded evidence (such as board measurements), say in the commit and docs
+  that it was not replayed, and replay it later. Native service work can proceed
+  meanwhile.
 - Follow the workspace boundaries in `docs/architecture.md`. Introduce crates when they have
   a concrete responsibility; avoid empty placeholder implementations.
 - Record significant toolchain, dependency, protocol, and geometry decisions with
