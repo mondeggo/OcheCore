@@ -1,3 +1,5 @@
 # Shell scripts must keep LF line endings, also in Windows checkouts that
 # run them through WSL or Docker: bash rejects CRLF.
 *.sh text eol=lf
+# Batch files need CRLF for cmd.exe labels and goto.
+*.bat text eol=crlf

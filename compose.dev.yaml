@@ -1,0 +1,19 @@
+# Development overlay for compose.yaml, used by scripts/dev.sh and scripts/dev.bat.
+# A separate project, image and data volume keep production data alone.
+services:
+  ochecore:
+    image: ochecore:dev
+    container_name: ochecore-dev
+    restart: "no"
+    # A new named volume belongs to root; the image has no /data to copy
+    # ownership from, so development runs as root (still without capabilities).
+    user: "0:0"
+    # Synthetic darts: Docker Desktop cannot pass USB cameras through.
+    command: ["run", "--demo", "--init-bind", "0.0.0.0"]
+    volumes: !override
+      - type: volume
+        source: ochecore-dev-data
+        target: /data
+
+volumes:
+  ochecore-dev-data:
