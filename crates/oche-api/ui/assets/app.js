@@ -1957,13 +1957,24 @@ async function flattenFrame(blob, calibration) {
 }
 
 /* The Live board's view: the drawn board, or one calibrated camera's
-   flattened picture, refreshed every few seconds. */
+   flattened picture. A picture is fetched only when the still scene changes
+   (the board empties, or a dart arrives), not streamed, to spare the
+   daemon's CPU and the network. */
 function createBoardViewSwitch(view) {
   const container = document.getElementById("board-view");
   let choice = storage.get("board-view", "drawn");
   let url = null;
   let busy = false;
   let shownKey = "";
+  /* The scene the shown picture was taken in. */
+  let pictureKey = "";
+
+  /* The still scene worth a picture, or null while it is moving or partly
+     emptied: an empty board, or the darts on it. */
+  const sceneKey = snapshot => snapshot.scene === "empty" || snapshot.scene === "darts_present"
+    ? JSON.stringify([choice, snapshot.session_id, snapshot.calibration?.created_unix_ms,
+      snapshot.scene, snapshot.physical_darts, snapshot.throws.length])
+    : null;
 
   const cameras = snapshot => snapshot.mode !== "live" ? [] : snapshot.config.cameras
     .filter(camera => calibrationFor(snapshot.calibration, camera) && isStreaming(snapshot, camera.slot));
@@ -1980,24 +1991,34 @@ function createBoardViewSwitch(view) {
     const camera = snapshot && cameras(snapshot).find(candidate => String(candidate.slot) === choice);
     if (!camera) {
       view.showPhoto(null);
+      pictureKey = "";
       return;
     }
-    if (busy || document.hidden) return;
+    const key = sceneKey(snapshot);
+    if (!key || key === pictureKey || busy || document.hidden) return;
     busy = true;
     try {
       const response = await fetch(api.snapshotUrl(camera.slot), { cache: "no-store" });
       const flat = response.ok && await flattenFrame(await response.blob(), calibrationFor(snapshot.calibration, camera));
       if (flat && choice === String(camera.slot)) {
         const next = URL.createObjectURL(flat);
+        /* Decoded before the swap, so the old picture stays until the new
+           one can be drawn instead of flashing blank. */
+        const decoded = new Image();
+        decoded.src = next;
+        await decoded.decode();
         view.showPhoto(next);
         if (url) URL.revokeObjectURL(url);
         url = next;
+        pictureKey = key;
       }
     } catch {
-      /* The next refresh tries again. */
+      /* The next daemon update tries again. */
     } finally {
       busy = false;
     }
+    /* The scene or the choice moved on while this picture loaded. */
+    if (daemon.snapshot && sceneKey(daemon.snapshot) !== key) refresh();
   }
 
   function render(snapshot) {
@@ -2029,15 +2050,16 @@ function createBoardViewSwitch(view) {
     choice = button.dataset.view;
     storage.set("board-view", choice);
     shownKey = "";
+    /* The previous camera's picture is not this one's: the drawn board shows
+       until this camera's picture arrives. */
+    view.showPhoto(null);
+    pictureKey = "";
     if (daemon.snapshot) render(daemon.snapshot);
     refresh();
   });
   document.addEventListener("click", event => {
     if (!container.contains(event.target)) container.classList.remove("is-open");
   });
-  window.setInterval(() => {
-    if (choice !== "drawn") refresh();
-  }, 3000);
   return { render, refresh };
 }
 
@@ -2423,7 +2445,6 @@ function initHomePage() {
     document.body.classList.add("is-ready");
     const view = createPlayView();
     const boardView = createBoardViewSwitch(view);
-    let revision = null;
     const accuracy = document.getElementById("home-accuracy");
     daemon.subscribe(({ snapshot: current, events }) => {
       const percent = accuracyPercent(current.accuracy);
@@ -2432,11 +2453,8 @@ function initHomePage() {
       accuracy.hidden = false;
       view.render(current);
       boardView.render(current);
-      /* A new picture as soon as the visit changes. */
-      if (current.revision !== revision) {
-        revision = current.revision;
-        boardView.refresh();
-      }
+      /* A new picture only when the still scene changes. */
+      boardView.refresh();
       renderControls(current);
       const items = events.map((event, index) => [event, events[index - 1]?.snapshot])
         .filter(([event]) => GAME_EVENTS[event.kind])
