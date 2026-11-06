@@ -1931,13 +1931,16 @@ async function flattenFrame(blob, calibration) {
   const outputContext = output.getContext("2d");
   const flat = outputContext.createImageData(FLAT_SIZE, FLAT_SIZE);
   const mmPerPx = 470 / FLAT_SIZE;
+  /* A homography's sign is arbitrary: points in front of the camera share the
+     board centre's w sign, whichever it is (as in oche-calibration). */
+  const centreW = toImage[2][2];
   for (let row = 0; row < FLAT_SIZE; row += 1) {
     /* Board y points to the 20; image rows point down. */
     const y = 235 - (row + 0.5) * mmPerPx;
     for (let column = 0; column < FLAT_SIZE; column += 1) {
       const x = (column + 0.5) * mmPerPx - 235;
       const w = toImage[2][0] * x + toImage[2][1] * y + toImage[2][2];
-      if (w <= 0) continue;
+      if (w * centreW <= 0) continue;
       const u = Math.round((toImage[0][0] * x + toImage[0][1] * y + toImage[0][2]) / w);
       const v = Math.round((toImage[1][0] * x + toImage[1][1] * y + toImage[1][2]) / w);
       if (u < 0 || v < 0 || u >= bitmap.width || v >= bitmap.height) continue;
