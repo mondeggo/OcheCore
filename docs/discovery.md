@@ -373,6 +373,17 @@ old rules); `--no-occupancy` reproduces the previous output byte for byte.
 One board, one set of green-flighted darts, and the light ring are all these
 recordings contain, and the method was developed on them.
 
+Board visibility (2026-11-09). With the room light off, OcheCore 0.1.9 on the
+installed board reported ready while its cameras saw nothing: auto exposure on
+all three, their snapshots had luma 0-1 over the whole board, and a black frame
+is as uniform in every cell as an empty board. The spread of a camera's cell
+medians (90th minus 10th percentile, light against dark segments) was 0-1 on
+those three snapshots and 179-186 on a lit frame of each camera in
+`visit2-heldout`. A camera now sees the board at 50 or more; dim light between
+the two is not measured, so the limit is a starting value.
+
+- [ ] Record the board's cameras at a few light levels (light ring only, room
+  light only, dimmed) to place the visibility limit.
 - [ ] Record the cameras opening on an empty board with the daemon's defaults
   (auto exposure) to measure how long they take to settle and confirm the
   occupancy check on it.

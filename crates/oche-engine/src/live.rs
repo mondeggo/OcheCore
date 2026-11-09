@@ -564,6 +564,14 @@ fn describe(event: &Event, board: &BoardDimensions) -> String {
             areas(occupancy)
         ),
         Event::Disturbance { .. } => "disturbance: large change that is not darts".into(),
+        Event::Blind { cameras, .. } => format!(
+            "not visible: {}; waiting for the board to show",
+            cameras
+                .iter()
+                .map(|(slot, contrast)| format!("camera {slot} contrast {contrast}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         Event::Dismissed {
             changes, occupancy, ..
         } => format!(
@@ -767,6 +775,9 @@ fn start(
                 let observation = match event {
                     Event::Baseline { .. } => Observation::Baseline,
                     Event::NotEmpty { .. } => Observation::NotEmpty,
+                    Event::Blind { cameras, .. } => {
+                        Observation::Blind(cameras.iter().map(|(slot, _)| *slot).collect())
+                    }
                     Event::Disturbance { .. } | Event::Dismissed { .. } => Observation::Disturbance,
                     Event::Removal { empty, .. } => Observation::Removal { empty },
                     Event::Arrival {

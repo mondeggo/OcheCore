@@ -600,12 +600,19 @@ function boardActivity(snapshot) {
     if (!snapshot.capabilities.calibration) return make("attention", "Needs calibration", "empty the board and calibrate");
     if (!snapshot.capabilities.vision) return make("attention", "Needs calibration", "at least two calibrated cameras are needed to score");
     if (snapshot.motion) return make("busy", "Motion", "waiting for the scene to settle");
+    if (snapshot.blind_cameras?.length) {
+      return make("attention", "Too dark", `camera ${snapshot.blind_cameras.join(", ")} cannot see the board; turn on the light`);
+    }
   }
   switch (snapshot.scene) {
     case "partial_takeout":
       return make("busy", "Taking out", "darts are being removed; finish clearing the board");
     case "darts_present":
       if (snapshot.throws.length >= 3) return make("attention", "Take out darts", "the visit is complete; remove the darts");
+      /* Seen on the board but never thrown: nothing counts until it is empty. */
+      if (snapshot.mode === "live" && !snapshot.throws.length && snapshot.physical_darts == null) {
+        return make("attention", "Take out darts", "the board is not empty; take everything out to start scoring");
+      }
       /* A reset clears the visit, not the board: the demo takes no fourth dart. */
       if (snapshot.mode === "demo" && snapshot.physical_darts >= 3) {
         return make("attention", "Take out darts", "three darts are still on the board; take them out");
@@ -2407,6 +2414,7 @@ const GAME_EVENTS = {
   standby: () => ["Standby", "Cameras closed", ""],
   board_ready: () => ["Board ready", "", ""],
   board_not_empty: () => ["Board not empty", "Take everything out", ""],
+  board_not_visible: () => ["Board not visible", "Turn on the light", ""],
   calibration_updated: () => ["Cameras recalibrated", "", ""]
 };
 

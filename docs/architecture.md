@@ -186,8 +186,13 @@ and compatibility claims; it does not gate the native control foundation.
   white balance cancel out. The first scene becomes the empty board only when
   it reads empty (else `board_not_empty`), an arrival that leaves an empty
   board reading empty is dismissed as `scene_disturbed`, and this verdict
-  decides whether a takeout emptied the board. With a camera uncalibrated, the
-  pixel-count rules above apply alone. Evidence is in `docs/discovery.md`.
+  decides whether a takeout emptied the board. A black frame is also uniform,
+  so first each camera must see the board: the 10th and 90th percentiles of
+  its cell medians must lie at least 50 apart (light and dark segments). If
+  any camera does not, nothing is judged (`board_not_visible`, activity
+  `TOO DARK`) and the next scene every camera sees is judged as the first.
+  With a camera uncalibrated, the pixel-count rules above apply alone.
+  Evidence is in `docs/discovery.md`.
 
 Standby changes the control lifecycle only; speed presets have no processing
 effect until capture/vision exists. The Autodarts board state is served but not

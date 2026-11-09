@@ -250,6 +250,7 @@ the board is doing:
 | `NEEDS SETUP` | A camera has no device, or the 20 has not been recorded yet. |
 | `NEEDS CALIBRATION` | Cameras are streaming but not calibrated (at least two are needed to score). |
 | `MOTION` | The cameras see movement; the scene is waiting to settle. |
+| `TOO DARK` | A camera cannot see the board's segments (light off, lens covered); nothing is scored until every camera sees the board again. |
 | `READY` | Calibrated and still; the board is empty or holds darts that count. |
 | `TAKING OUT` | Darts are being removed; the visit ends when the board is empty. |
 | `TAKE OUT DARTS` | Three darts are accepted; remove them. Also when the board was not empty as the cameras started: nothing scores until it is. |

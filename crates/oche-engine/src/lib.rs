@@ -44,6 +44,8 @@ pub struct Engine {
     cameras: Vec<CameraStatus>,
     motion: bool,
     resources: Option<Resources>,
+    /// Cameras that last reported they cannot see the board.
+    blind_cameras: Vec<u8>,
 }
 
 /// What the live detector saw, already scored on the measured board.
@@ -62,6 +64,9 @@ pub enum Observation {
     Removal { empty: bool },
     /// A large change that is not darts (lighting, a moved camera).
     Disturbance,
+    /// These cameras cannot see the board (light off, lens covered); nothing
+    /// is judged until every camera sees it again.
+    Blind(Vec<u8>),
 }
 
 /// A dart position from a client: finite, on or near the board.
@@ -123,6 +128,7 @@ impl Engine {
             cameras: Vec::new(),
             motion: false,
             resources: None,
+            blind_cameras: Vec::new(),
         }
     }
 
@@ -189,6 +195,7 @@ impl Engine {
             motion: self.motion,
             accuracy: self.accuracy.clone(),
             resources: self.resources,
+            blind_cameras: self.blind_cameras.clone(),
         }
     }
 
@@ -235,6 +242,8 @@ impl Engine {
                     return Ok(self.snapshot());
                 }
                 self.state = ServiceState::Running;
+                // The reopened cameras report again on their first still scene.
+                self.blind_cameras.clear();
                 "started"
             }
             Command::Stop => {
@@ -428,7 +437,19 @@ impl Engine {
         if self.mode != Mode::Live || self.state != ServiceState::Running {
             return;
         }
+        // Any other observation means every camera saw the board.
+        if !matches!(observation, Observation::Blind(_)) {
+            self.blind_cameras.clear();
+        }
         let kind = match observation {
+            Observation::Blind(cameras) => {
+                // What is on the board is unknown until it can be seen; the
+                // visit is the client's and stays.
+                self.blind_cameras = cameras;
+                self.scene = SceneState::Unknown;
+                self.physical_darts = None;
+                "board_not_visible"
+            }
             Observation::Baseline => {
                 self.scene = SceneState::Empty;
                 self.physical_darts = Some(0);
@@ -851,6 +872,28 @@ mod tests {
         assert_eq!(e.snapshot().physical_darts, Some(0));
         let kinds: Vec<_> = e.history().iter().map(|v| v.kind.clone()).collect();
         assert_eq!(kinds, ["started", "board_not_empty", "board_ready"]);
+    }
+
+    #[test]
+    fn a_board_the_cameras_cannot_see_is_unknown_until_they_can() {
+        let (_dir, mut e) = engine(Mode::Live);
+        e.command(Command::Start).unwrap();
+        e.observe(Observation::Baseline);
+        e.observe(Observation::Arrival(Some(("S20".into(), 20))));
+        e.observe(Observation::Blind(vec![1, 3]));
+        let snapshot = e.snapshot();
+        assert_eq!(snapshot.blind_cameras, [1, 3]);
+        assert_eq!(snapshot.scene, SceneState::Unknown);
+        assert_eq!(snapshot.physical_darts, None);
+        assert_eq!(snapshot.throws.len(), 1, "the visit stays");
+        e.observe(Observation::NotEmpty);
+        assert!(e.snapshot().blind_cameras.is_empty());
+        e.observe(Observation::Blind(vec![2]));
+        e.command(Command::Stop).unwrap();
+        e.command(Command::Start).unwrap();
+        assert!(e.snapshot().blind_cameras.is_empty(), "cleared on start");
+        let kinds: Vec<_> = e.history().iter().map(|v| v.kind.clone()).collect();
+        assert!(kinds.contains(&"board_not_visible".to_string()));
     }
 
     #[test]

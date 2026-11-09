@@ -14,6 +14,7 @@ const PICTURE_EVENTS = new Set([
   "takeout_completed",
   "board_ready",
   "board_not_empty",
+  "board_not_visible",
   "calibration_updated"
 ]);
 

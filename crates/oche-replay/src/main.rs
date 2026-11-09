@@ -124,8 +124,9 @@ enum Command {
         #[arg(long)]
         no_occupancy: bool,
     },
-    /// Print each camera's outlying board area (mm²) at regular times: how
-    /// far a frame is from an empty board (see `oche_vision::occupancy`).
+    /// Print each camera's outlying board area (mm²) and board contrast at
+    /// regular times: how far a frame is from an empty board, and whether the
+    /// camera can see the board (see `oche_vision::occupancy`).
     Occupancy {
         session: PathBuf,
         #[arg(long)]
@@ -380,6 +381,15 @@ fn main() -> Result<()> {
                     Event::Disturbance { timestamp } => {
                         println!("event {n}: {:.2} s disturbance", timestamp - origin)
                     }
+                    Event::Blind { timestamp, cameras } => println!(
+                        "event {n}: {:.2} s not visible; contrast {}",
+                        timestamp - origin,
+                        cameras
+                            .iter()
+                            .map(|(slot, contrast)| format!("cam{slot} {contrast}"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
                     Event::Dismissed {
                         timestamp,
                         changes,
@@ -485,7 +495,7 @@ fn main() -> Result<()> {
                 "time_s {}",
                 cameras
                     .iter()
-                    .map(|c| format!("cam{}_mm2", c.camera))
+                    .map(|c| format!("cam{0}_mm2 cam{0}_contrast", c.camera))
                     .collect::<Vec<_>>()
                     .join(" ")
             );
@@ -509,10 +519,10 @@ fn main() -> Result<()> {
                             &settings,
                         ));
                     }
-                    let area = cells
-                        .as_ref()
-                        .and_then(|c| c.outlying_mm2(&image, &settings));
-                    row.push(area.map_or("-".into(), |a| format!("{a:.0}")));
+                    let view = cells.as_ref().and_then(|c| c.judge(&image, &settings));
+                    row.push(view.map_or("- -".into(), |v| {
+                        format!("{:.0} {}", v.outlying_mm2, v.contrast)
+                    }));
                 }
                 println!("{}", row.join(" "));
                 t += every;

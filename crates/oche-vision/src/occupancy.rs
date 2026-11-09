@@ -17,6 +17,10 @@
 //! camera, and calibration errors up to 2 mm or 1° added at most 11 mm². The
 //! limit sits between them; it is not validated on other boards, darts, or
 //! lighting.
+//!
+//! A black frame is also uniform in every cell, so the same cells first tell
+//! whether the camera can see the board at all: the board's light and dark
+//! segments must stay apart ([`View::contrast`]).
 
 use oche_domain::board::BoardDimensions;
 
@@ -39,6 +43,9 @@ pub struct OccupancySettings {
     /// A camera sees something on the board when its outlying pixels cover
     /// more than this board area.
     pub occupied_mm2: f64,
+    /// Below this [`View::contrast`] a camera cannot see the board (light
+    /// off, lens covered), and an even black frame says nothing about it.
+    pub min_contrast: u8,
 }
 
 impl Default for OccupancySettings {
@@ -49,6 +56,9 @@ impl Default for OccupancySettings {
             single_bins: 3,
             speck_radius: 1,
             occupied_mm2: 50.0,
+            // Lit recordings measured 179-186 and the board with its light off
+            // 0-1 (2026-11-09); dim light in between is not measured yet.
+            min_contrast: 50,
         }
     }
 }
@@ -131,9 +141,9 @@ impl Cells {
         self.width == image.width && self.height == image.height
     }
 
-    /// Board area (mm²) of the pixels that stand out from their cell, or
-    /// `None` for a frame of another size or a camera that sees no cell.
-    pub fn outlying_mm2(&self, image: &GrayImage, settings: &OccupancySettings) -> Option<f64> {
+    /// What this camera sees of the board in one frame, or `None` for a frame
+    /// of another size or a camera that sees no cell.
+    pub fn judge(&self, image: &GrayImage, settings: &OccupancySettings) -> Option<View> {
         if !self.fits(image) || self.pixels.is_empty() {
             return None;
         }
@@ -141,20 +151,35 @@ impl Cells {
         for &(i, cell, _) in &self.pixels {
             histograms[cell as usize][image.data[i as usize] as usize] += 1;
         }
-        let medians: Vec<u8> = histograms
+        let medians: Vec<(u32, u8)> = histograms
             .iter()
             .map(|histogram| {
-                let half = histogram.iter().sum::<u32>().div_ceil(2);
+                let total = histogram.iter().sum::<u32>();
+                let half = total.div_ceil(2);
                 let mut seen = 0;
-                histogram
+                let median = histogram
                     .iter()
                     .position(|n| {
                         seen += n;
                         seen >= half.max(1)
                     })
-                    .unwrap_or(0) as u8
+                    .unwrap_or(0) as u8;
+                (total, median)
             })
             .collect();
+        // The board's light and dark segments: their medians stay far apart
+        // at any exposure while the camera can see them.
+        let mut levels: Vec<u8> = medians
+            .iter()
+            .filter(|(total, _)| *total >= MIN_CELL_PIXELS)
+            .map(|(_, median)| *median)
+            .collect();
+        levels.sort_unstable();
+        let contrast = match levels.len() {
+            0 => 0,
+            n => levels[(n - 1) * 9 / 10] - levels[(n - 1) / 10],
+        };
+        let medians: Vec<u8> = medians.into_iter().map(|(_, median)| median).collect();
         let local = |i: u32| {
             let (x, y) = (i as usize % self.width, i as usize / self.width);
             (y - self.top) * self.columns + (x - self.left)
@@ -173,13 +198,38 @@ impl Cells {
             self.rows,
             radius,
         );
-        Some(
-            self.pixels
-                .iter()
-                .filter(|(i, _, _)| kept[local(*i)])
-                // From +0: an empty float sum is -0, which prints as "-0".
-                .fold(0.0, |total, (_, _, area)| total + f64::from(*area)),
-        )
+        let outlying_mm2 = self
+            .pixels
+            .iter()
+            .filter(|(i, _, _)| kept[local(*i)])
+            // From +0: an empty float sum is -0, which prints as "-0".
+            .fold(0.0, |total, (_, _, area)| total + f64::from(*area));
+        Some(View {
+            outlying_mm2,
+            contrast,
+        })
+    }
+}
+
+/// Cells with fewer pixels than this in a frame do not count toward its
+/// contrast: a few pixels at a cell's far tip are mostly blur.
+const MIN_CELL_PIXELS: u32 = 20;
+
+/// What one camera sees of the board in one frame.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct View {
+    /// Board area (mm²) of the pixels that stand out from their cell.
+    pub outlying_mm2: f64,
+    /// Luma between the board's darker and lighter cells (the 10th and 90th
+    /// percentiles of the cell medians): about 180 on a lit board, near 0
+    /// when the camera cannot see it.
+    pub contrast: u8,
+}
+
+impl View {
+    /// The camera can see the board's segments well enough to judge it.
+    pub fn sees_board(&self, settings: &OccupancySettings) -> bool {
+        self.contrast >= settings.min_contrast
     }
 }
 
@@ -284,12 +334,16 @@ pub(crate) mod tests {
         }
     }
 
-    fn outlying(image: &GrayImage) -> f64 {
+    fn view(image: &GrayImage) -> View {
         let board = BoardDimensions::wdf();
         let settings = OccupancySettings::default();
         Cells::new(&Scaled, &board, image.width, image.height, &settings)
-            .outlying_mm2(image, &settings)
+            .judge(image, &settings)
             .unwrap()
+    }
+
+    fn outlying(image: &GrayImage) -> f64 {
+        view(image).outlying_mm2
     }
 
     #[test]
@@ -298,6 +352,18 @@ pub(crate) mod tests {
         for gain in [0.5, 1.0, 1.25] {
             assert_eq!(outlying(&board_frame(&board, gain)), 0.0, "gain {gain}");
         }
+    }
+
+    #[test]
+    fn a_board_in_the_dark_is_uniform_but_not_seen() {
+        let board = BoardDimensions::wdf();
+        let settings = OccupancySettings::default();
+        let lit = view(&board_frame(&board, 1.0));
+        assert!(lit.sees_board(&settings), "contrast {}", lit.contrast);
+        // Lights off: every pixel 0 or 1, as the board's cameras measured.
+        let dark = view(&board_frame(&board, 0.006));
+        assert_eq!(dark.outlying_mm2, 0.0);
+        assert!(!dark.sees_board(&settings), "contrast {}", dark.contrast);
     }
 
     #[test]

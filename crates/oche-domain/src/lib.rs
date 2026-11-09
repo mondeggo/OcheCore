@@ -620,6 +620,10 @@ pub struct Snapshot {
     /// (outside Linux). Not published as an event.
     #[serde(default)]
     pub resources: Option<Resources>,
+    /// Cameras that cannot see the board's segments (light off, lens
+    /// covered); while any is listed nothing is judged and scene is unknown.
+    #[serde(default)]
+    pub blind_cameras: Vec<u8>,
 }
 
 /// What the daemon process uses, all its threads included.
@@ -776,6 +780,17 @@ impl Snapshot {
                     "MOTION",
                     "waiting for the scene to settle",
                 );
+            }
+            if !self.blind_cameras.is_empty() {
+                let slots: Vec<String> = self.blind_cameras.iter().map(u8::to_string).collect();
+                return BoardActivity {
+                    level: ActivityLevel::Attention,
+                    label: "TOO DARK",
+                    detail: format!(
+                        "camera {} cannot see the board; turn on the light",
+                        slots.join(", ")
+                    ),
+                };
             }
         }
         let on_board = self
@@ -990,6 +1005,7 @@ mod tests {
             motion: false,
             accuracy: Accuracy::default(),
             resources: None,
+            blind_cameras: Vec::new(),
         }
     }
 
@@ -1071,6 +1087,20 @@ mod tests {
         );
         // A thrown dart on a board whose count is unknown still scores.
         s.throws = vec![Throw::synthetic("S20").unwrap()];
+        assert_eq!(s.activity().label, "READY");
+    }
+
+    #[test]
+    fn a_board_the_cameras_cannot_see_is_not_ready() {
+        let mut s = live_snapshot();
+        s.blind_cameras = vec![1, 2, 3];
+        let activity = s.activity();
+        assert_eq!(
+            (activity.label, activity.level),
+            ("TOO DARK", ActivityLevel::Attention)
+        );
+        assert!(activity.detail.contains("1, 2, 3"));
+        s.blind_cameras.clear();
         assert_eq!(s.activity().label, "READY");
     }
 

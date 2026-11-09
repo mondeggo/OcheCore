@@ -121,7 +121,8 @@ Snapshots include configuration, API version, OcheCore's `version`, session ID, 
 sequence, monotonic uptime, service/scene state, mode, accepted throws, physical
 occupancy, capability flags, per-camera status (`off`, `starting`, `streaming`,
 `error` with delivered FPS and message), the current calibration record, the
-`accuracy` count, and `motion`: whether the cameras currently see
+`accuracy` count, `blind_cameras` (slots that last reported they cannot see
+the board; empty normally), and `motion`: whether the cameras currently see
 movement (not published as an event; read it from the snapshot). `resources`
 holds the daemon's own `cpu_percent` (CPU time over the last second, all
 threads, as a percentage of one core as `top` shows it, so up to 400 on four
@@ -129,7 +130,7 @@ cores; `null` until the second sample) and `memory_bytes` (resident memory),
 read from `/proc` once a second; it is `null` outside Linux and is not published
 as an event either. These are the process's own figures, not a benchmark. Clients derive a
 board activity from these fields (stopped, standby, starting, error, needs
-setup, needs calibration, motion, ready, taking out, take out darts); the
+setup, needs calibration, motion, too dark, ready, taking out, take out darts); the
 `oche-domain` crate provides `Snapshot::activity` for this.
 Modes: `live` (default `run`: cameras open while running), `control_only`
 (`run --no-capture`), and `demo`. Outside live mode occupancy is `null` and scene
@@ -150,7 +151,10 @@ Mutation events: `started`, `stopped`, `visit_reset`, `throw_accepted`,
 `accuracy_reset`, and in live mode `board_ready`, `board_not_empty` (the first
 still scene shows something on the board: scene `darts_present`, occupancy
 `null`, and no darts count until a still scene shows the board empty, which
-sends `board_ready`), `throw_uncertain`, `arrival_ignored` (a fourth
+sends `board_ready`), `board_not_visible` (a camera cannot see the board's
+segments, as with the light off: scene `unknown`, occupancy `null`, the
+cameras listed in `blind_cameras`, and nothing judged until every camera sees
+the board, which is then judged as at start), `throw_uncertain`, `arrival_ignored` (a fourth
 dart; the visit is kept), `scene_disturbed` (also when a change on an empty
 board leaves every camera seeing it empty, as when exposure settles), `cameras_changed` (state or error
 changes, not FPS), and `calibration_updated`. Repeated

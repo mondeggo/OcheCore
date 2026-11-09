@@ -12,7 +12,8 @@
 //! becomes the empty board only when every camera sees it empty, an "arrival"
 //! that leaves an empty board empty is dismissed (exposure or lighting
 //! settling, not a dart), and a removal empties the board when every camera
-//! sees it empty.
+//! sees it empty. Before any of that, a camera that cannot see the board's
+//! segments (light off) stops the judging until every camera sees them again.
 //!
 //! The thresholds are the ones validated on the 2026-10-29 recordings at
 //! 10 analyses per second; they are starting values, not tuned limits.
@@ -26,7 +27,7 @@ use crate::mask::{
     Axis, GrayImage, RansacOptions, ShaftFit, dilate, flight_and_tip, join_aligned, label,
     narrow_points, principal_axis, ransac_lines, remove_thin, shaft_axis,
 };
-use crate::occupancy::{Cells, OccupancySettings};
+use crate::occupancy::{Cells, OccupancySettings, View};
 use crate::{Abstention, FusionLimits, Impact, LineObservation, fuse_lines};
 
 /// Maps an image line through two pixels onto the board plane.
@@ -237,6 +238,13 @@ pub enum Event {
     },
     /// A large change that is not darts; the new scene is accepted silently.
     Disturbance { timestamp: f64 },
+    /// These cameras cannot see the board (the light is off, a lens is
+    /// covered), with the contrast each measured: nothing is judged, and the
+    /// next still scene every camera sees is judged as the first one.
+    Blind {
+        timestamp: f64,
+        cameras: Vec<(u8, u8)>,
+    },
 }
 
 struct Camera {
@@ -338,9 +346,9 @@ impl Detector {
         self
     }
 
-    /// Outlying board area per camera, or `None` when occupancy is not
+    /// What each camera sees of the board, or `None` when occupancy is not
     /// checked or some camera has no mapper.
-    fn occupancy(&mut self, scenes: &[GrayImage]) -> Option<Occupancy> {
+    fn views(&mut self, scenes: &[GrayImage]) -> Option<Vec<(u8, View)>> {
         let board = self.board?;
         let settings = self.settings.occupancy;
         self.cameras
@@ -357,8 +365,8 @@ impl Detector {
                         &settings,
                     ));
                 }
-                let area = camera.cells.as_ref()?.outlying_mm2(scene, &settings)?;
-                Some((camera.slot, area))
+                let view = camera.cells.as_ref()?.judge(scene, &settings)?;
+                Some((camera.slot, view))
             })
             .collect()
     }
@@ -455,7 +463,33 @@ impl Detector {
             .iter()
             .map(|c| c.latest)
             .fold(f64::NEG_INFINITY, f64::max);
-        let occupancy = self.occupancy(&reference);
+        let views = self.views(&reference);
+        if let Some(views) = &views {
+            let blind: Vec<(u8, u8)> = views
+                .iter()
+                .filter(|(_, view)| !view.sees_board(&settings.occupancy))
+                .map(|(slot, view)| (*slot, view.contrast))
+                .collect();
+            if !blind.is_empty() {
+                // A dark view is even in every cell and would pass for an
+                // empty board. Judge nothing, and once every camera sees the
+                // board again start over from the board as it is then.
+                self.reference = None;
+                self.empty = None;
+                self.scene_empty = false;
+                self.visit_pixels.iter_mut().for_each(|p| *p = 0);
+                return Some(Event::Blind {
+                    timestamp,
+                    cameras: blind,
+                });
+            }
+        }
+        let occupancy: Option<Occupancy> = views.map(|views| {
+            views
+                .into_iter()
+                .map(|(slot, view)| (slot, view.outlying_mm2))
+                .collect()
+        });
         let limit = settings.occupancy.occupied_mm2;
         let occupied = occupancy
             .as_ref()
@@ -1279,6 +1313,35 @@ mod tests {
         assert!(
             matches!(events.as_slice(), [Event::Baseline { .. }]),
             "once the dart is out, the board is"
+        );
+    }
+
+    #[test]
+    fn a_board_in_the_dark_is_not_judged_until_the_light_returns() {
+        use crate::occupancy::tests::board_frame;
+        let board = BoardDimensions::wdf();
+        let lit = board_frame(&board, 1.0);
+        let dark = board_frame(&board, 0.006);
+        let mut detector = board_detector(true);
+        let mut t = 0.0;
+        // Started in the dark: no empty board is taken.
+        let events = feed(&mut detector, &mut t, &dark, 2.0);
+        assert!(
+            matches!(events.as_slice(), [Event::Blind { cameras, .. }]
+                if cameras.iter().map(|(slot, _)| *slot).eq([1, 2])),
+            "both cameras are blind"
+        );
+        let events = feed(&mut detector, &mut t, &lit, 2.0);
+        assert!(matches!(events.as_slice(), [Event::Baseline { .. }]));
+        // The light goes off again, and on: judged afresh, not as a change.
+        let mut events = feed(&mut detector, &mut t, &dark, 2.0);
+        events.extend(feed(&mut detector, &mut t, &lit, 2.0));
+        assert!(
+            matches!(
+                events.as_slice(),
+                [Event::Blind { .. }, Event::Baseline { .. }]
+            ),
+            "no dart, removal, or disturbance from the light"
         );
     }
 
