@@ -177,6 +177,17 @@ and compatibility claims; it does not gate the native control foundation.
   pixels this visit's arrivals changed; the empty reference restarts after
   each takeout. References refresh when motion starts so lighting drift during
   long pauses is not counted. These rules were set on the 2026-10-29 sessions.
+- **Occupancy (`oche-vision::occupancy`):** with every camera calibrated, each
+  still scene is also judged on its own: through the calibration, every pixel
+  belongs to a scoring cell (segment and ring, singles split in three, minus
+  2 mm along the wires), and pixels departing from their cell's median luma by
+  more than 40 cover a board area per camera. Above 50 mm² in any camera the
+  board is not empty. Because each frame is compared with itself, exposure and
+  white balance cancel out. The first scene becomes the empty board only when
+  it reads empty (else `board_not_empty`), an arrival that leaves an empty
+  board reading empty is dismissed as `scene_disturbed`, and this verdict
+  decides whether a takeout emptied the board. With a camera uncalibrated, the
+  pixel-count rules above apply alone. Evidence is in `docs/discovery.md`.
 
 Standby changes the control lifecycle only; speed presets have no processing
 effect until capture/vision exists. The Autodarts board state is served but not

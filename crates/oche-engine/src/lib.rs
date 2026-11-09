@@ -51,6 +51,9 @@ pub struct Engine {
 pub enum Observation {
     /// The first still scene, taken as the empty board.
     Baseline,
+    /// The first still scene shows something on the board; it is not taken as
+    /// the empty board until a still scene shows the board empty.
+    NotEmpty,
     /// A dart arrived; `None` when its position could not be determined.
     Arrival(Option<(String, u16)>),
     /// A dart arrived but the cameras could not place it; the text says why.
@@ -430,6 +433,11 @@ impl Engine {
                 self.scene = SceneState::Empty;
                 self.physical_darts = Some(0);
                 "board_ready"
+            }
+            Observation::NotEmpty => {
+                self.scene = SceneState::DartsPresent;
+                self.physical_darts = None;
+                "board_not_empty"
             }
             Observation::Arrival(scored) => self.arrival(scored, None, evidence),
             Observation::Uncertain(reason) => self.arrival(None, Some(reason), evidence),
@@ -827,6 +835,22 @@ mod tests {
             .is_err()
         );
         assert!(!e.snapshot().capabilities.vision);
+    }
+
+    #[test]
+    fn a_board_not_empty_at_start_has_unknown_darts_until_it_is() {
+        let (_dir, mut e) = engine(Mode::Live);
+        e.command(Command::Start).unwrap();
+        e.observe(Observation::NotEmpty);
+        let snapshot = e.snapshot();
+        assert_eq!(snapshot.scene, SceneState::DartsPresent);
+        assert_eq!(snapshot.physical_darts, None);
+        assert!(snapshot.throws.is_empty(), "nothing was thrown");
+        e.observe(Observation::Baseline);
+        assert_eq!(e.snapshot().scene, SceneState::Empty);
+        assert_eq!(e.snapshot().physical_darts, Some(0));
+        let kinds: Vec<_> = e.history().iter().map(|v| v.kind.clone()).collect();
+        assert_eq!(kinds, ["started", "board_not_empty", "board_ready"]);
     }
 
     #[test]

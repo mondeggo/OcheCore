@@ -550,17 +550,40 @@ fn describe(event: &Event, board: &BoardDimensions) -> String {
             .collect::<Vec<_>>()
             .join("; ")
     };
+    let areas = |occupancy: &[(u8, f64)]| {
+        occupancy
+            .iter()
+            .map(|(slot, area)| format!("camera {slot} {area:.0} mm²"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
     match event {
         Event::Baseline { .. } => "baseline: first still scene taken as the empty board".into(),
+        Event::NotEmpty { occupancy, .. } => format!(
+            "not empty: something on the board ({}); waiting for an empty board",
+            areas(occupancy)
+        ),
         Event::Disturbance { .. } => "disturbance: large change that is not darts".into(),
+        Event::Dismissed {
+            changes, occupancy, ..
+        } => format!(
+            "dismissed: a change, but every camera still sees an empty board ({}); {}",
+            areas(occupancy),
+            views(changes)
+        ),
         Event::Removal {
             changes,
             empty,
             remaining,
             added,
+            occupancy,
             ..
         } => format!(
-            "removal, board empty: {empty}; pixels still differing {remaining:?} of {added:?} added; {}",
+            "removal, board empty: {empty}; pixels still differing {remaining:?} of {added:?} added; {}{}",
+            occupancy.as_deref().map_or(String::new(), |o| format!(
+                "seen on the board: {}; ",
+                areas(o)
+            )),
             views(changes)
         ),
         Event::Arrival {
@@ -689,7 +712,7 @@ fn start(
                 min_still_seconds: still_seconds,
                 ..Settings::default()
             };
-            let mut detector = Detector::new(mappers, settings);
+            let mut detector = Detector::new(mappers, settings).check_occupancy(board);
             if images.is_some() {
                 detector = detector.keep_detail();
             }
@@ -743,7 +766,8 @@ fn start(
                 scene = now;
                 let observation = match event {
                     Event::Baseline { .. } => Observation::Baseline,
-                    Event::Disturbance { .. } => Observation::Disturbance,
+                    Event::NotEmpty { .. } => Observation::NotEmpty,
+                    Event::Disturbance { .. } | Event::Dismissed { .. } => Observation::Disturbance,
                     Event::Removal { empty, .. } => Observation::Removal { empty },
                     Event::Arrival {
                         impact, changes, ..

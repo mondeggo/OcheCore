@@ -2406,6 +2406,7 @@ const GAME_EVENTS = {
   stopped: () => ["Board stopped", "", ""],
   standby: () => ["Standby", "Cameras closed", ""],
   board_ready: () => ["Board ready", "", ""],
+  board_not_empty: () => ["Board not empty", "Take everything out", ""],
   calibration_updated: () => ["Cameras recalibrated", "", ""]
 };
 

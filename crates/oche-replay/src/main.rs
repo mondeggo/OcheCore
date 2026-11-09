@@ -12,6 +12,8 @@ use oche_domain::board::{BoardDimensions, BoardPoint};
 use oche_replay::{darts, open_session, png};
 use oche_vision::image::RgbImage;
 use oche_vision::live::Event;
+use oche_vision::mask::GrayImage;
+use oche_vision::occupancy::{Cells, OccupancySettings};
 
 const WIRE: [u8; 3] = [255, 230, 0];
 const ANCHOR: [u8; 3] = [0, 255, 255];
@@ -117,6 +119,20 @@ enum Command {
         /// detector's default when omitted.
         #[arg(long)]
         watch_radius_mm: Option<f64>,
+        /// Do not judge each still scene's occupancy on the board (the
+        /// detector before that check).
+        #[arg(long)]
+        no_occupancy: bool,
+    },
+    /// Print each camera's outlying board area (mm²) at regular times: how
+    /// far a frame is from an empty board (see `oche_vision::occupancy`).
+    Occupancy {
+        session: PathBuf,
+        #[arg(long)]
+        calibration: PathBuf,
+        /// Seconds between samples.
+        #[arg(long, default_value_t = 0.5)]
+        every: f64,
     },
     /// Time JPEG decoding and luma conversion on recorded frames.
     Bench {
@@ -164,6 +180,25 @@ fn decode(session: &std::path::Path, camera: u8, seq: u64) -> Result<RgbImage> {
     RgbImage::decode_jpeg(&recording.read(frame)?)
         .map_err(anyhow::Error::msg)
         .with_context(|| format!("decoding cam{camera} seq {}", frame.seq))
+}
+
+/// The measured board and each camera's homography from a `calibrate` report.
+fn load_calibration(
+    path: &std::path::Path,
+) -> Result<(BoardDimensions, std::collections::BTreeMap<u8, Homography>)> {
+    let report: serde_json::Value = serde_json::from_slice(&fs::read(path)?)?;
+    let board: BoardDimensions = serde_json::from_value(report["board"].clone())
+        .context("calibration report lacks a board")?;
+    let mut homographies = std::collections::BTreeMap::new();
+    for entry in report["cameras"]
+        .as_array()
+        .context("calibration report lacks cameras")?
+    {
+        if let (Some(camera), Some(h)) = (entry["camera"].as_u64(), entry.get("homography")) {
+            homographies.insert(camera as u8, serde_json::from_value(h.clone())?);
+        }
+    }
+    Ok((board, homographies))
 }
 
 fn main() -> Result<()> {
@@ -307,28 +342,25 @@ fn main() -> Result<()> {
             hz,
             overlays,
             watch_radius_mm,
+            no_occupancy,
         } => {
             fs::create_dir_all(&out)?;
-            let report: serde_json::Value = serde_json::from_slice(&fs::read(&calibration)?)?;
-            let board: BoardDimensions = serde_json::from_value(report["board"].clone())
-                .context("calibration report lacks a board")?;
-            let mut homographies = std::collections::BTreeMap::new();
-            for entry in report["cameras"]
-                .as_array()
-                .context("calibration report lacks cameras")?
-            {
-                if let (Some(camera), Some(h)) = (entry["camera"].as_u64(), entry.get("homography"))
-                {
-                    homographies.insert(camera as u8, serde_json::from_value(h.clone())?);
-                }
-            }
+            let (board, homographies) = load_calibration(&calibration)?;
             let cameras = open_session(&session)?;
             let origin = cameras[0].frames[0].timestamp;
             let mut settings = oche_vision::live::Settings::default();
             if let Some(radius) = watch_radius_mm {
                 settings.watch_radius_mm = radius;
             }
-            let events = darts::analyse(&cameras, &homographies, hz, settings)?;
+            let checked = (!no_occupancy).then_some(board);
+            let events = darts::analyse(&cameras, &homographies, hz, settings, checked)?;
+            let areas = |occupancy: &[(u8, f64)]| {
+                occupancy
+                    .iter()
+                    .map(|(slot, area)| format!("cam{slot} {area:.0}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
             for (n, event) in events.iter().enumerate() {
                 match event {
                     Event::Baseline { timestamp } => {
@@ -337,8 +369,28 @@ fn main() -> Result<()> {
                             timestamp - origin
                         )
                     }
+                    Event::NotEmpty {
+                        timestamp,
+                        occupancy,
+                    } => println!(
+                        "event {n}: {:.2} s not empty; outlying mm² {}",
+                        timestamp - origin,
+                        areas(occupancy)
+                    ),
                     Event::Disturbance { timestamp } => {
                         println!("event {n}: {:.2} s disturbance", timestamp - origin)
+                    }
+                    Event::Dismissed {
+                        timestamp,
+                        changes,
+                        occupancy,
+                    } => {
+                        println!(
+                            "event {n}: {:.2} s dismissed, board still empty; outlying mm² {}",
+                            timestamp - origin,
+                            areas(occupancy)
+                        );
+                        darts::print_changes(changes);
                     }
                     Event::Removal {
                         timestamp,
@@ -346,13 +398,17 @@ fn main() -> Result<()> {
                         empty,
                         remaining,
                         added,
+                        occupancy,
                     } => {
                         println!(
-                            "event {n}: {:.2} s removal, board {}; px left {:?} of {:?} added by the visit",
+                            "event {n}: {:.2} s removal, board {}; px left {:?} of {:?} added by the visit{}",
                             timestamp - origin,
                             if *empty { "empty" } else { "not empty" },
                             remaining,
-                            added
+                            added,
+                            occupancy
+                                .as_deref()
+                                .map_or(String::new(), |o| format!("; outlying mm² {}", areas(o)))
                         );
                         darts::print_changes(changes);
                     }
@@ -399,6 +455,67 @@ fn main() -> Result<()> {
                         }
                     }
                 }
+            }
+        }
+        Command::Occupancy {
+            session,
+            calibration,
+            every,
+        } => {
+            anyhow::ensure!(every > 0.0, "--every must be positive");
+            let (board, homographies) = load_calibration(&calibration)?;
+            let cameras: Vec<_> = open_session(&session)?
+                .into_iter()
+                .filter(|c| homographies.contains_key(&c.camera))
+                .collect();
+            anyhow::ensure!(!cameras.is_empty(), "no calibrated camera in the session");
+            let origin = cameras
+                .iter()
+                .filter_map(|c| c.frames.first())
+                .map(|f| f.timestamp)
+                .fold(f64::INFINITY, f64::min);
+            let end = cameras
+                .iter()
+                .filter_map(|c| c.frames.last())
+                .map(|f| f.timestamp)
+                .fold(f64::INFINITY, f64::min);
+            let settings = OccupancySettings::default();
+            let mut cells: Vec<Option<Cells>> = cameras.iter().map(|_| None).collect();
+            println!(
+                "time_s {}",
+                cameras
+                    .iter()
+                    .map(|c| format!("cam{}_mm2", c.camera))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
+            let mut t = origin;
+            while t <= end {
+                let mut row = vec![format!("{:.2}", t - origin)];
+                for (camera, cells) in cameras.iter().zip(cells.iter_mut()) {
+                    let frame = camera
+                        .frames
+                        .iter()
+                        .min_by(|a, b| (a.timestamp - t).abs().total_cmp(&(b.timestamp - t).abs()))
+                        .context("empty recording")?;
+                    let image =
+                        GrayImage::decode_jpeg(&camera.read(frame)?).map_err(anyhow::Error::msg)?;
+                    if !cells.as_ref().is_some_and(|c| c.fits(&image)) {
+                        *cells = Some(Cells::new(
+                            &homographies[&camera.camera],
+                            &board,
+                            image.width,
+                            image.height,
+                            &settings,
+                        ));
+                    }
+                    let area = cells
+                        .as_ref()
+                        .and_then(|c| c.outlying_mm2(&image, &settings));
+                    row.push(area.map_or("-".into(), |a| format!("{a:.0}")));
+                }
+                println!("{}", row.join(" "));
+                t += every;
             }
         }
         Command::Bench {

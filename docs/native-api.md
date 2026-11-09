@@ -147,8 +147,12 @@ is always `snapshot`. Subscription and snapshot are atomic with respect to comma
 
 Mutation events: `started`, `stopped`, `visit_reset`, `throw_accepted`,
 `partial_takeout`, `takeout_completed`, `throw_corrected`, `config_changed`, `standby`,
-`accuracy_reset`, and in live mode `board_ready`, `throw_uncertain`, `arrival_ignored` (a fourth
-dart; the visit is kept), `scene_disturbed`, `cameras_changed` (state or error
+`accuracy_reset`, and in live mode `board_ready`, `board_not_empty` (the first
+still scene shows something on the board: scene `darts_present`, occupancy
+`null`, and no darts count until a still scene shows the board empty, which
+sends `board_ready`), `throw_uncertain`, `arrival_ignored` (a fourth
+dart; the visit is kept), `scene_disturbed` (also when a change on an empty
+board leaves every camera seeing it empty, as when exposure settles), `cameras_changed` (state or error
 changes, not FPS), and `calibration_updated`. Repeated
 start/stop requests that do not change state do not duplicate transition events.
 Start/wake keeps the service awake; status reads and configuration edits do not.

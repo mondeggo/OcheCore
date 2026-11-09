@@ -17,12 +17,14 @@ use oche_vision::mask::GrayImage;
 use crate::CameraRecording;
 
 /// Runs a session at `analysis_hz` per camera and returns events with their
-/// timestamps relative to the first frame.
+/// timestamps relative to the first frame. With `board`, each still scene's
+/// occupancy is checked on it, as the daemon does.
 pub fn analyse(
     cameras: &[CameraRecording],
     calibration: &BTreeMap<u8, Homography>,
     analysis_hz: u32,
     settings: Settings,
+    board: Option<BoardDimensions>,
 ) -> Result<Vec<Event>> {
     let period = 1.0 / f64::from(analysis_hz.max(1));
     let mut schedule = Vec::new();
@@ -51,6 +53,9 @@ pub fn analyse(
         })
         .collect();
     let mut detector = Detector::new(mappers, settings).keep_detail();
+    if let Some(board) = board {
+        detector = detector.check_occupancy(board);
+    }
     let mut events = Vec::new();
     for (timestamp, c, i) in schedule {
         let camera = &cameras[c];

@@ -252,7 +252,7 @@ the board is doing:
 | `MOTION` | The cameras see movement; the scene is waiting to settle. |
 | `READY` | Calibrated and still; the board is empty or holds darts that count. |
 | `TAKING OUT` | Darts are being removed; the visit ends when the board is empty. |
-| `TAKE OUT DARTS` | Three darts are accepted; remove them. |
+| `TAKE OUT DARTS` | Three darts are accepted; remove them. Also when the board was not empty as the cameras started: nothing scores until it is. |
 | `ERROR` | A camera failed; the line names the camera and the cause. |
 | `CONTROLS ONLY` | Running without cameras (`--no-capture`). |
 

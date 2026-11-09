@@ -339,6 +339,43 @@ this. The waits now depend on the speed (1.0, 0.8, 0.5, 0.4, 0.3 s from
 `very_low` to `very_high`; `default` was 1.0 s); not yet replayed on the
 recordings or measured again on the board.
 
+Occupancy from cell uniformity (2026-11-09). On a board, OcheCore took the
+first still scene after the cameras opened as the empty board while they
+were still adjusting, then counted the difference as a dart that could never
+be taken out. Through each camera's calibration every pixel belongs to a
+scoring cell (bulls; per segment the treble, the double, and each single area
+split in three radially; 2 mm along every wire left out); on an empty board a
+cell is nearly uniform, so pixels whose luma departs from their cell's median
+by more than 40 measure what lies on it, as board area after removing
+1-pixel specks (`oche_vision::occupancy`). The still periods of the four dart
+sessions were found by plain frame differencing (99 periods) and labelled
+empty or not by eye from per-camera crops (30 empty, 69 with darts). These
+labels were made during this analysis, not by the thrower, and visit3 and
+visit4 have no thrower labels to check them against. `oche-replay occupancy`
+sampled every 0.25 s; samples within a labelled period (0.3 s margins):
+
+| Scenes | Samples | Outlying area, best camera |
+| --- | --- | --- |
+| Empty, calibrated (four sessions and `empty-calib-ring-on`) | 315 | 0 mm² in every camera |
+| Empty, `empty-calib-autowb` with the visit1 calibration (made 9 minutes earlier) | 20 | at most 37 mm² |
+| Darts present | 869 | at least 155 mm² |
+
+The limit is 50 mm² in any camera. In 7 of 213 occupied frames checked by the
+first prototype only one camera exceeded 300 mm², so any camera decides.
+Synthetic changes to empty frames measured in a prototype (gain 0.5-1.8, colour
+casts, a 0.6-1.2 brightness gradient, noise) left every cell uniform;
+calibrations shifted by up to 2 mm or turned by 1° added at most 11 mm²,
+3 mm up to 362 mm². These recordings used manual exposure and show no settling
+after the cameras open, so the startup failure itself is not in them. With the
+check, `oche-replay darts` gave the same events, impacts, and takeout results
+as before on all four sessions (visit1 has an uncalibrated camera and keeps the
+old rules); `--no-occupancy` reproduces the previous output byte for byte.
+One board, one set of green-flighted darts, and the light ring are all these
+recordings contain, and the method was developed on them.
+
+- [ ] Record the cameras opening on an empty board with the daemon's defaults
+  (auto exposure) to measure how long they take to settle and confirm the
+  occupancy check on it.
 - [ ] Record movement beside the board (people passing, a hand on the wall) to
   measure the watched radius on real disturbances.
 - [ ] Confirm the measured radii with a ruler (treble inner wire diameter

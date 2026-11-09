@@ -803,6 +803,19 @@ impl Snapshot {
                     "three darts are still on the board; take them out",
                 )
             }
+            // Seen on the board but never thrown: the board was not empty when
+            // the cameras started, and nothing counts until it is.
+            SceneState::DartsPresent
+                if self.mode == Mode::Live
+                    && self.throws.is_empty()
+                    && self.physical_darts.is_none() =>
+            {
+                make(
+                    ActivityLevel::Attention,
+                    "TAKE OUT DARTS",
+                    "the board is not empty; take everything out to start scoring",
+                )
+            }
             SceneState::DartsPresent => BoardActivity {
                 level: ActivityLevel::Ready,
                 label: "READY",
@@ -1043,6 +1056,21 @@ mod tests {
         s.physical_darts = Some(3);
         assert_eq!(s.activity().label, "TAKE OUT DARTS");
         s.physical_darts = Some(2);
+        assert_eq!(s.activity().label, "READY");
+    }
+
+    #[test]
+    fn a_board_not_empty_at_start_asks_for_takeout() {
+        let mut s = live_snapshot();
+        s.scene = SceneState::DartsPresent;
+        s.physical_darts = None;
+        let activity = s.activity();
+        assert_eq!(
+            (activity.label, activity.level),
+            ("TAKE OUT DARTS", ActivityLevel::Attention)
+        );
+        // A thrown dart on a board whose count is unknown still scores.
+        s.throws = vec![Throw::synthetic("S20").unwrap()];
         assert_eq!(s.activity().label, "READY");
     }
 

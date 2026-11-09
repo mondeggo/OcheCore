@@ -15,6 +15,7 @@ pub mod compensate;
 pub mod image;
 pub mod live;
 pub mod mask;
+pub mod occupancy;
 
 use oche_domain::board::{BoardLine, BoardPoint};
 use serde::{Deserialize, Serialize};

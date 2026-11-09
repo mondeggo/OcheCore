@@ -7,18 +7,26 @@
 //! line on the board, the lines are fused, and the change is reported as an
 //! arrival or a removal. The first still scene is taken as the empty board.
 //!
+//! With the board's dimensions ([`Detector::check_occupancy`]), each still
+//! scene is also judged on its own (see [`crate::occupancy`]): the first scene
+//! becomes the empty board only when every camera sees it empty, an "arrival"
+//! that leaves an empty board empty is dismissed (exposure or lighting
+//! settling, not a dart), and a removal empties the board when every camera
+//! sees it empty.
+//!
 //! The thresholds are the ones validated on the 2026-10-29 recordings at
 //! 10 analyses per second; they are starting values, not tuned limits.
 
 use std::collections::VecDeque;
 
-use oche_domain::board::BoardLine;
+use oche_domain::board::{BoardDimensions, BoardLine};
 
 use crate::compensate::{CompensateOptions, DartMove, compensate};
 use crate::mask::{
     Axis, GrayImage, RansacOptions, ShaftFit, dilate, flight_and_tip, join_aligned, label,
     narrow_points, principal_axis, ransac_lines, remove_thin, shaft_axis,
 };
+use crate::occupancy::{Cells, OccupancySettings};
 use crate::{Abstention, FusionLimits, Impact, LineObservation, fuse_lines};
 
 /// Maps an image line through two pixels onto the board plane.
@@ -101,6 +109,9 @@ pub struct Settings {
     /// Changed fraction above which a change is a disturbance (lighting, a
     /// moved camera, a large object) rather than darts.
     pub disturbance_fraction: f64,
+    /// Whether a still scene shows an empty board, used once the detector
+    /// knows the board's dimensions.
+    pub occupancy: OccupancySettings,
 }
 
 /// Default for [`Settings::watch_radius_mm`].
@@ -142,6 +153,7 @@ impl Default for Settings {
             },
             empty_ratio: 0.25,
             disturbance_fraction: 0.05,
+            occupancy: OccupancySettings::default(),
         }
     }
 }
@@ -186,23 +198,42 @@ pub enum LineMethod {
     Ransac,
 }
 
+/// Outlying board area (mm²) per camera slot; see [`crate::occupancy`].
+pub type Occupancy = Vec<(u8, f64)>;
+
 pub enum Event {
     /// The first still scene, taken as the empty board.
     Baseline { timestamp: f64 },
+    /// The first still scene shows something on the board, so it is not taken
+    /// as the empty board; the next still scene is judged again.
+    NotEmpty {
+        timestamp: f64,
+        occupancy: Occupancy,
+    },
     Arrival {
         timestamp: f64,
         changes: Vec<CameraChange>,
         impact: Result<Impact, Abstention>,
     },
+    /// What looked like an arrival on an empty board, while every camera
+    /// still sees the board empty: exposure or lighting settling, not a dart.
+    /// The new scene becomes the empty board.
+    Dismissed {
+        timestamp: f64,
+        changes: Vec<CameraChange>,
+        occupancy: Occupancy,
+    },
     Removal {
         timestamp: f64,
         changes: Vec<CameraChange>,
-        /// Every camera now matches the empty board.
+        /// Every camera now sees an empty board.
         empty: bool,
         /// Pixels per camera that still differ from the last empty board.
         remaining: Vec<usize>,
         /// Pixels per camera that this visit's arrivals changed.
         added: Vec<usize>,
+        /// When known, what decided `empty` instead of those pixel counts.
+        occupancy: Option<Occupancy>,
     },
     /// A large change that is not darts; the new scene is accepted silently.
     Disturbance { timestamp: f64 },
@@ -213,6 +244,8 @@ struct Camera {
     mapper: Option<Box<dyn LineMapper>>,
     /// Watched pixels for frames of this size, from the mapper.
     watched: Option<(usize, usize, Vec<bool>)>,
+    /// Scoring cells for frames of their size, from the mapper.
+    cells: Option<Cells>,
     previous_small: Option<GrayImage>,
     still_since: Option<f64>,
     latest: f64,
@@ -230,6 +263,8 @@ pub struct Detector {
     /// Pixels changed per camera by arrivals since the board was last empty.
     visit_pixels: Vec<usize>,
     keep_detail: bool,
+    /// Judge each still scene's occupancy on this board.
+    board: Option<BoardDimensions>,
 }
 
 impl Camera {
@@ -272,6 +307,7 @@ impl Detector {
                     slot,
                     mapper,
                     watched: None,
+                    cells: None,
                     previous_small: None,
                     still_since: None,
                     latest: f64::NEG_INFINITY,
@@ -284,6 +320,7 @@ impl Detector {
             scene_empty: false,
             visit_pixels: Vec::new(),
             keep_detail: false,
+            board: None,
         }
     }
 
@@ -291,6 +328,39 @@ impl Detector {
     pub fn keep_detail(mut self) -> Self {
         self.keep_detail = true;
         self
+    }
+
+    /// Judge from every camera whether each still scene shows an empty board
+    /// (see [`crate::occupancy`]). Takes effect only while every camera has a
+    /// mapper.
+    pub fn check_occupancy(mut self, board: BoardDimensions) -> Self {
+        self.board = Some(board);
+        self
+    }
+
+    /// Outlying board area per camera, or `None` when occupancy is not
+    /// checked or some camera has no mapper.
+    fn occupancy(&mut self, scenes: &[GrayImage]) -> Option<Occupancy> {
+        let board = self.board?;
+        let settings = self.settings.occupancy;
+        self.cameras
+            .iter_mut()
+            .zip(scenes)
+            .map(|(camera, scene)| {
+                let mapper = camera.mapper.as_deref()?;
+                if !camera.cells.as_ref().is_some_and(|c| c.fits(scene)) {
+                    camera.cells = Some(Cells::new(
+                        mapper,
+                        &board,
+                        scene.width,
+                        scene.height,
+                        &settings,
+                    ));
+                }
+                let area = camera.cells.as_ref()?.outlying_mm2(scene, &settings)?;
+                Some((camera.slot, area))
+            })
+            .collect()
     }
 
     /// No scene is settled: some camera still sees movement, or the cameras
@@ -385,6 +455,19 @@ impl Detector {
             .iter()
             .map(|c| c.latest)
             .fold(f64::NEG_INFINITY, f64::max);
+        let occupancy = self.occupancy(&reference);
+        let limit = settings.occupancy.occupied_mm2;
+        let occupied = occupancy
+            .as_ref()
+            .map(|o| o.iter().any(|(_, area)| *area > limit));
+        if self.reference.is_none() && occupied == Some(true) {
+            // Darts left in the board (or a hand) must not become part of the
+            // empty board, or they would never be counted or taken out.
+            return Some(Event::NotEmpty {
+                timestamp,
+                occupancy: occupancy.unwrap_or_default(),
+            });
+        }
         let Some(before) = self.reference.replace(reference.clone()) else {
             self.empty = Some(reference);
             self.scene_empty = true;
@@ -423,6 +506,16 @@ impl Detector {
         }
         let arrivals = changes.iter().filter(|c| c.arrival_score > 0.0).count();
         if arrivals * 2 > changes.len() {
+            if self.scene_empty && occupied == Some(false) {
+                // Nothing landed: the empty board only looks different, as when
+                // exposure settles after the cameras open.
+                self.empty = Some(reference);
+                return Some(Event::Dismissed {
+                    timestamp,
+                    changes,
+                    occupancy: occupancy.unwrap_or_default(),
+                });
+            }
             let impact = fuse_changes(&mut changes, &settings);
             self.scene_empty = false;
             for (total, change) in self.visit_pixels.iter_mut().zip(&changes) {
@@ -452,7 +545,9 @@ impl Detector {
             .zip(&added)
             .filter(|(left, added)| **left as f64 <= settings.empty_ratio * **added as f64)
             .count();
-        let now_empty = empty_views * 2 > remaining.len();
+        // Every camera seeing the board empty is direct evidence; the pixel
+        // counts only compare with an empty board that may have drifted.
+        let now_empty = occupied.map_or(empty_views * 2 > remaining.len(), |o| !o);
         if now_empty {
             // Restart from this board: earlier holes and lighting drift no
             // longer count against the next visit.
@@ -466,6 +561,7 @@ impl Detector {
             empty: now_empty,
             remaining,
             added,
+            occupancy,
         })
     }
 }
@@ -1144,6 +1240,84 @@ mod tests {
             events.as_slice(),
             [Event::Removal { empty: true, .. }]
         ));
+    }
+
+    fn board_detector(check: bool) -> Detector {
+        use crate::occupancy::tests::Scaled;
+        let detector = Detector::new(
+            vec![(1, Some(Box::new(Scaled))), (2, Some(Box::new(Scaled)))],
+            Settings::default(),
+        );
+        if check {
+            detector.check_occupancy(BoardDimensions::wdf())
+        } else {
+            detector
+        }
+    }
+
+    #[test]
+    fn darts_left_in_the_board_do_not_become_the_empty_board() {
+        use crate::occupancy::tests::board_frame;
+        let board = BoardDimensions::wdf();
+        let empty = board_frame(&board, 1.0);
+        // A dart (barrel and flight) left in the board when the cameras open.
+        let mut dart = empty.clone();
+        for y in 40..70 {
+            for x in 120..123 {
+                dart.data[y * dart.width + x] = 120;
+            }
+        }
+        let mut detector = board_detector(true);
+        let mut t = 0.0;
+        let events = feed(&mut detector, &mut t, &dart, 2.0);
+        assert!(
+            matches!(events.as_slice(), [Event::NotEmpty { occupancy, .. }]
+                if occupancy.iter().all(|(_, area)| *area > 50.0)),
+            "the board with a dart is not taken as empty"
+        );
+        let events = feed(&mut detector, &mut t, &empty, 2.0);
+        assert!(
+            matches!(events.as_slice(), [Event::Baseline { .. }]),
+            "once the dart is out, the board is"
+        );
+    }
+
+    #[test]
+    fn a_change_that_leaves_the_board_empty_is_dismissed() {
+        use crate::occupancy::tests::{Scaled, board_frame};
+        let board = BoardDimensions::wdf();
+        let before = board_frame(&board, 1.0);
+        // One segment's inner single brightens evenly, as when exposure or
+        // white balance settles unevenly over the board after the cameras open.
+        let mut after = before.clone();
+        for (i, pixel) in after.data.iter_mut().enumerate() {
+            let (x, y) = Scaled
+                .pixel_to_board(((i % 200) as f64, (i / 200) as f64))
+                .unwrap();
+            let r = x.hypot(y);
+            if r > board.outer_bull && r < board.treble_inner && x.abs() < 0.16 * y {
+                *pixel = pixel.saturating_add(45);
+            }
+        }
+        let run = |check: bool| {
+            let mut detector = board_detector(check);
+            let mut t = 0.0;
+            let mut events = feed(&mut detector, &mut t, &before, 2.0);
+            events.extend(feed(&mut detector, &mut t, &after, 2.0));
+            events
+        };
+        assert!(
+            matches!(
+                run(false).as_slice(),
+                [Event::Baseline { .. }, Event::Arrival { .. }]
+            ),
+            "without the check the change counts as a dart"
+        );
+        assert!(
+            matches!(run(true).as_slice(), [Event::Baseline { .. }, Event::Dismissed { occupancy, .. }]
+                if occupancy.iter().all(|(_, area)| *area == 0.0)),
+            "with it, the board is still empty"
+        );
     }
 
     #[test]
