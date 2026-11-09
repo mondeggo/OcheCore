@@ -827,8 +827,8 @@ impl Snapshot {
             {
                 make(
                     ActivityLevel::Attention,
-                    "TAKE OUT DARTS",
-                    "the board is not empty; take everything out to start scoring",
+                    "CLEAR THE BOARD",
+                    "something is on the board; clear it to start scoring",
                 )
             }
             SceneState::DartsPresent => BoardActivity {
@@ -1076,14 +1076,14 @@ mod tests {
     }
 
     #[test]
-    fn a_board_not_empty_at_start_asks_for_takeout() {
+    fn a_board_not_empty_at_start_asks_to_clear_it() {
         let mut s = live_snapshot();
         s.scene = SceneState::DartsPresent;
         s.physical_darts = None;
         let activity = s.activity();
         assert_eq!(
             (activity.label, activity.level),
-            ("TAKE OUT DARTS", ActivityLevel::Attention)
+            ("CLEAR THE BOARD", ActivityLevel::Attention)
         );
         // A thrown dart on a board whose count is unknown still scores.
         s.throws = vec![Throw::synthetic("S20").unwrap()];

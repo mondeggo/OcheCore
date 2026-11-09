@@ -253,7 +253,8 @@ the board is doing:
 | `TOO DARK` | A camera cannot see the board's segments (light off, lens covered); nothing is scored until every camera sees the board again. |
 | `READY` | Calibrated and still; the board is empty or holds darts that count. |
 | `TAKING OUT` | Darts are being removed; the visit ends when the board is empty. |
-| `TAKE OUT DARTS` | Three darts are accepted; remove them. Also when the board was not empty as the cameras started: nothing scores until it is. |
+| `TAKE OUT DARTS` | Three darts are accepted; remove them. |
+| `CLEAR THE BOARD` | Something was on the board when the cameras started (darts, a hand); nothing scores until the board is empty. |
 | `ERROR` | A camera failed; the line names the camera and the cause. |
 | `CONTROLS ONLY` | Running without cameras (`--no-capture`). |
 

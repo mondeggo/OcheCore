@@ -611,7 +611,7 @@ function boardActivity(snapshot) {
       if (snapshot.throws.length >= 3) return make("attention", "Take out darts", "the visit is complete; remove the darts");
       /* Seen on the board but never thrown: nothing counts until it is empty. */
       if (snapshot.mode === "live" && !snapshot.throws.length && snapshot.physical_darts == null) {
-        return make("attention", "Take out darts", "the board is not empty; take everything out to start scoring");
+        return make("attention", "Clear the board", "something is on the board; clear it to start scoring");
       }
       /* A reset clears the visit, not the board: the demo takes no fourth dart. */
       if (snapshot.mode === "demo" && snapshot.physical_darts >= 3) {
@@ -2413,7 +2413,7 @@ const GAME_EVENTS = {
   stopped: () => ["Board stopped", "", ""],
   standby: () => ["Standby", "Cameras closed", ""],
   board_ready: () => ["Board ready", "", ""],
-  board_not_empty: () => ["Board not empty", "Take everything out", ""],
+  board_not_empty: () => ["Board not empty", "Clear the board", ""],
   board_not_visible: () => ["Board not visible", "Turn on the light", ""],
   calibration_updated: () => ["Cameras recalibrated", "", ""]
 };

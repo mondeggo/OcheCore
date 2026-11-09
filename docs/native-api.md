@@ -130,7 +130,8 @@ cores; `null` until the second sample) and `memory_bytes` (resident memory),
 read from `/proc` once a second; it is `null` outside Linux and is not published
 as an event either. These are the process's own figures, not a benchmark. Clients derive a
 board activity from these fields (stopped, standby, starting, error, needs
-setup, needs calibration, motion, too dark, ready, taking out, take out darts); the
+setup, needs calibration, motion, too dark, ready, taking out, take out darts,
+clear the board); the
 `oche-domain` crate provides `Snapshot::activity` for this.
 Modes: `live` (default `run`: cameras open while running), `control_only`
 (`run --no-capture`), and `demo`. Outside live mode occupancy is `null` and scene
