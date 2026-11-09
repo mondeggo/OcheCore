@@ -273,6 +273,19 @@ pub struct Detector {
     keep_detail: bool,
     /// Judge each still scene's occupancy on this board.
     board: Option<BoardDimensions>,
+    /// Why there is no empty board yet, as last reported.
+    waiting: Option<Waiting>,
+    /// When to judge the still scene again while waiting.
+    rejudge_at: Option<f64>,
+}
+
+/// Why the detector has no empty board to compare with.
+#[derive(Debug, Clone, PartialEq)]
+enum Waiting {
+    /// These cameras cannot see the board.
+    Blind(Vec<u8>),
+    /// Something is on the board.
+    NotEmpty,
 }
 
 impl Camera {
@@ -329,7 +342,16 @@ impl Detector {
             visit_pixels: Vec::new(),
             keep_detail: false,
             board: None,
+            waiting: None,
+            rejudge_at: None,
         }
+    }
+
+    /// Records why the detector is waiting and when to look again; true when
+    /// that differs from what was last reported.
+    fn wait(&mut self, verdict: Waiting, timestamp: f64) -> bool {
+        self.rejudge_at = Some(timestamp + self.settings.min_still_seconds);
+        self.waiting.replace(verdict.clone()) != Some(verdict)
     }
 
     /// Keep masks and references in each change, for overlays.
@@ -384,6 +406,8 @@ impl Detector {
         self.scene_empty = false;
         self.visit_pixels.clear();
         self.settled = false;
+        self.waiting = None;
+        self.rejudge_at = None;
     }
 
     /// Replaces the settled references with each camera's latest still frames,
@@ -444,11 +468,16 @@ impl Detector {
             camera.recent.clear();
             return None;
         }
-        if self.settled
-            || !self.cameras.iter().all(|c| {
-                c.still_since
-                    .is_some_and(|since| c.latest - since >= settings.min_still_seconds)
-            })
+        // Without an empty board, a still scene is judged again from time to
+        // time: what first read as darts or darkness may have been the
+        // cameras still adjusting, and nothing need move for that to pass.
+        let rejudge = self.settled && self.rejudge_at.is_some_and(|at| timestamp >= at);
+        if !rejudge
+            && (self.settled
+                || !self.cameras.iter().all(|c| {
+                    c.still_since
+                        .is_some_and(|since| c.latest - since >= settings.min_still_seconds)
+                }))
         {
             return None;
         }
@@ -478,7 +507,8 @@ impl Detector {
                 self.empty = None;
                 self.scene_empty = false;
                 self.visit_pixels.iter_mut().for_each(|p| *p = 0);
-                return Some(Event::Blind {
+                let verdict = Waiting::Blind(blind.iter().map(|(slot, _)| *slot).collect());
+                return self.wait(verdict, timestamp).then_some(Event::Blind {
                     timestamp,
                     cameras: blind,
                 });
@@ -497,11 +527,15 @@ impl Detector {
         if self.reference.is_none() && occupied == Some(true) {
             // Darts left in the board (or a hand) must not become part of the
             // empty board, or they would never be counted or taken out.
-            return Some(Event::NotEmpty {
-                timestamp,
-                occupancy: occupancy.unwrap_or_default(),
-            });
+            return self
+                .wait(Waiting::NotEmpty, timestamp)
+                .then(|| Event::NotEmpty {
+                    timestamp,
+                    occupancy: occupancy.unwrap_or_default(),
+                });
         }
+        self.waiting = None;
+        self.rejudge_at = None;
         let Some(before) = self.reference.replace(reference.clone()) else {
             self.empty = Some(reference);
             self.scene_empty = true;
@@ -1314,6 +1348,51 @@ mod tests {
             matches!(events.as_slice(), [Event::Baseline { .. }]),
             "once the dart is out, the board is"
         );
+    }
+
+    #[test]
+    fn a_board_that_read_not_empty_is_judged_again_without_motion() {
+        use crate::occupancy::tests::board_frame;
+        let board = BoardDimensions::wdf();
+        let empty = board_frame(&board, 1.0);
+        let mut marked = empty.clone();
+        for y in 40..70 {
+            for x in 120..123 {
+                marked.data[y * marked.width + x] = 120;
+            }
+        }
+        // What read as a dart fades too slowly to count as motion, as the
+        // cameras' exposure settles after the light comes on.
+        let blend = |a: f64| GrayImage {
+            data: marked
+                .data
+                .iter()
+                .zip(&empty.data)
+                .map(|(m, e)| (f64::from(*m) * (1.0 - a) + f64::from(*e) * a).round() as u8)
+                .collect(),
+            ..empty.clone()
+        };
+        let mut detector = board_detector(true);
+        let mut t = 0.0;
+        let mut events = feed(&mut detector, &mut t, &marked, 1.5);
+        for step in 1..=20 {
+            events.extend(feed(
+                &mut detector,
+                &mut t,
+                &blend(f64::from(step) / 20.0),
+                0.2,
+            ));
+            assert!(!detector.in_motion(), "the fade is not motion");
+        }
+        events.extend(feed(&mut detector, &mut t, &empty, 2.0));
+        assert!(
+            matches!(
+                events.as_slice(),
+                [Event::NotEmpty { .. }, Event::Baseline { .. }]
+            ),
+            "reported once, then the empty board without anything moving"
+        );
+        assert!(!detector.in_motion());
     }
 
     #[test]

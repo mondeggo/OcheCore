@@ -191,6 +191,10 @@ and compatibility claims; it does not gate the native control foundation.
   its cell medians must lie at least 50 apart (light and dark segments). If
   any camera does not, nothing is judged (`board_not_visible`, activity
   `TOO DARK`) and the next scene every camera sees is judged as the first.
+  Until the board reads visible and empty, the still scene is judged again
+  after each stillness wait without needing movement, since cameras that
+  have just been switched on or relit settle without moving; only a changed
+  verdict is reported.
   With a camera uncalibrated, the pixel-count rules above apply alone.
   Evidence is in `docs/discovery.md`.
 

@@ -155,7 +155,10 @@ still scene shows something on the board: scene `darts_present`, occupancy
 sends `board_ready`), `board_not_visible` (a camera cannot see the board's
 segments, as with the light off: scene `unknown`, occupancy `null`, the
 cameras listed in `blind_cameras`, and nothing judged until every camera sees
-the board, which is then judged as at start), `throw_uncertain`, `arrival_ignored` (a fourth
+the board, which is then judged as at start; while waiting for a visible,
+empty board the still scene is judged again after each stillness wait, about
+a second, without needing movement, and either event is sent only when the
+verdict changes), `throw_uncertain`, `arrival_ignored` (a fourth
 dart; the visit is kept), `scene_disturbed` (also when a change on an empty
 board leaves every camera seeing it empty, as when exposure settles), `cameras_changed` (state or error
 changes, not FPS), and `calibration_updated`. Repeated
